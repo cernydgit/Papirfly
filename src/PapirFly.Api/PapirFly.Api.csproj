@@ -3,6 +3,7 @@
     <ProjectReference Include="../PapirFly.Application/PapirFly.Application.csproj" />
     <ProjectReference Include="../PapirFly.Infrastructure/PapirFly.Infrastructure.csproj" />
     <PackageReference Include="Serilog.AspNetCore" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" PrivateAssets="all" />
     <PackageReference Include="Swashbuckle.AspNetCore" />
   </ItemGroup>
 </Project>

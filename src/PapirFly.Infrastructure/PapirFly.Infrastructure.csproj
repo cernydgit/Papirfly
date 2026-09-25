@@ -2,5 +2,7 @@
   <ItemGroup>
     <ProjectReference Include="../PapirFly.Application/PapirFly.Application.csproj" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.InMemory" />
+    <PackageReference Include="Microsoft.Extensions.Options.ConfigurationExtensions" />
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" />
   </ItemGroup>
 </Project>

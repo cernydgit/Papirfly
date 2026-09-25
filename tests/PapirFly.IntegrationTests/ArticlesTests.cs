@@ -4,6 +4,9 @@ using Alba;
 using Microsoft.Extensions.DependencyInjection;
 using PapirFly.Application.Articles;
 using PapirFly.Application.Interfaces;
+using Microsoft.EntityFrameworkCore;
+using PapirFly.Infrastructure.Configuration;
+using PapirFly.Infrastructure.Persistence;
 
 namespace PapirFly.IntegrationTests;
 
@@ -352,20 +355,70 @@ public sealed class ArticlesTests(ApiFixture api) : IClassFixture<ApiFixture>, I
         Assert.Equal(created.GetRawText(), (await api.Send("GET", Url(created))).Json.GetRawText());
     }
 
-    /// <summary>Verifies that different application hosts do not share InMemory data.</summary>
+    /// <summary>Verifies that independently configured fixtures do not share article data.</summary>
     /// <returns>A task that completes after the independent-host assertions.</returns>
     [Fact]
-    public async Task Application_hosts_have_isolated_in_memory_stores()
+    public async Task Independently_configured_hosts_have_isolated_stores()
     {
         await Create();
-        await using var otherHost = await AlbaHost.For<Program>();
-        await otherHost.Scenario(s =>
+        var otherApi = new ApiFixture();
+        try
         {
-            s.Get.Url(ArticlesUrl);
-            s.StatusCodeShouldBeOk();
-            s.ContentShouldBe("[]");
-        });
+            await otherApi.InitializeAsync();
+            Assert.Empty((await otherApi.Send("GET", ArticlesUrl)).Json.EnumerateArray());
+        }
+        finally
+        {
+            await otherApi.DisposeAsync();
+        }
         Assert.Single((await api.Send("GET", ArticlesUrl)).Json.EnumerateArray());
+    }
+
+    /// <summary>Checks the actual EF provider and that PostgreSQL migrations have been applied.</summary>
+    /// <returns>A task that completes after the provider and schema assertions.</returns>
+    [Fact]
+    public async Task Configured_provider_is_used_and_relational_schema_is_current()
+    {
+        var factory = api.Host.Services.GetRequiredService<IDbContextFactory<ArticlesDbContext>>();
+        await using var context = await factory.CreateDbContextAsync();
+        Assert.Equal(api.Provider == StorageProvider.PostgreSql, context.Database.IsNpgsql());
+        if (context.Database.IsRelational())
+        {
+            Assert.NotEmpty(await context.Database.GetAppliedMigrationsAsync());
+            Assert.Empty(await context.Database.GetPendingMigrationsAsync());
+            Assert.False(context.Database.HasPendingModelChanges());
+        }
+        else
+            Assert.True(context.Database.IsInMemory());
+    }
+
+    /// <summary>Checks that PostgreSQL retains articles across host restarts while InMemory does not.</summary>
+    /// <returns>A task that completes after the restart and read-back assertions.</returns>
+    [Fact]
+    public async Task Storage_lifetime_matches_the_selected_provider()
+    {
+        var created = await Create();
+        await api.RestartAsync();
+        var articles = (await api.Send("GET", ArticlesUrl)).Json.EnumerateArray().ToArray();
+        if (api.Provider == StorageProvider.PostgreSql)
+            Assert.Equal(created.GetRawText(), Assert.Single(articles).GetRawText());
+        else
+            Assert.Empty(articles);
+    }
+
+    /// <summary>Checks that SQL wildcard characters and escape characters remain literal search values.</summary>
+    /// <param name="name">The literal substring to look up.</param>
+    /// <returns>A task that completes after the exact-match search assertion.</returns>
+    [Theory]
+    [InlineData("50%")]
+    [InlineData("a_b")]
+    [InlineData("path\\name")]
+    public async Task Search_treats_sql_metacharacters_as_literal_text(string name)
+    {
+        await Create(JsonSerializer.Serialize(new { name = $"Article {name}", description = "Literal text", price = 0 }));
+        await Create(JsonSerializer.Serialize(new { name = "Article 50x axb pathXname", description = "Decoy", price = 0 }));
+        var matches = (await api.Send("GET", ArticlesUrl + "?name=" + Uri.EscapeDataString(name))).Json;
+        Assert.Equal($"Article {name}", Assert.Single(matches.EnumerateArray()).GetProperty("name").GetString());
     }
 
     private async Task<JsonElement> Create(string json = ValidJson) => (await api.Send("POST", ArticlesUrl, json)).Json;

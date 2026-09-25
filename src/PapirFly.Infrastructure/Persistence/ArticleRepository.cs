@@ -23,7 +23,16 @@ public sealed class ArticleRepository(IDbContextFactory<ArticlesDbContext> conte
         await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
         var articles = context.Articles.AsNoTracking();
         if (name is not null)
-            articles = articles.Where(x => x.Name.Contains(name, StringComparison.OrdinalIgnoreCase));
+        {
+            if (context.Database.IsNpgsql())
+            {
+                // ILIKE metacharacters must remain literal user input, just as with Contains.
+                var pattern = "%" + name.Replace("\\", "\\\\").Replace("%", "\\%").Replace("_", "\\_") + "%";
+                articles = articles.Where(x => EF.Functions.ILike(x.Name, pattern, "\\"));
+            }
+            else
+                articles = articles.Where(x => x.Name.Contains(name, StringComparison.OrdinalIgnoreCase));
+        }
         if (category is not null)
             articles = articles.Where(x => x.Category == category);
 

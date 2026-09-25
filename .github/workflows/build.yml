@@ -14,12 +14,17 @@ concurrency:
 
 jobs:
   build:
-    name: Build and test (.NET 10)
+    name: Build and test (${{ matrix.storage }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        storage: [InMemory, PostgreSql]
     timeout-minutes: 15
     env:
       DOTNET_NOLOGO: 'true'
       DOTNET_CLI_TELEMETRY_OPTOUT: 'true'
+      PAPIRFLY_TEST_Storage__Provider: ${{ matrix.storage }}
     steps:
       - uses: actions/checkout@v7
 
@@ -52,7 +57,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: test-results
+          name: test-results-${{ matrix.storage }}
           path: TestResults/*.trx
           if-no-files-found: ignore
           retention-days: 14

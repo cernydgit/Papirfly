@@ -1,24 +1,66 @@
+using System.Collections.Concurrent;
 using System.Text.Json;
 using Alba;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.TestHost;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using PapirFly.Infrastructure.Configuration;
 using PapirFly.Infrastructure.Persistence;
+using Serilog.Core;
+using Serilog.Events;
+using Testcontainers.PostgreSql;
 
 namespace PapirFly.IntegrationTests;
 
 /// <summary>Hosts the real API through Alba and provides isolated persistence for integration scenarios.</summary>
 public sealed class ApiFixture : IAsyncLifetime
 {
+    private PostgreSqlContainer? postgres;
+
     /// <summary>Gets the application host shared by one test class.</summary>
     public IAlbaHost Host { get; private set; } = null!;
 
-    /// <summary>Starts the API in the Testing environment.</summary>
-    /// <returns>A task that completes when the host is ready.</returns>
-    public async Task InitializeAsync() => Host = await AlbaHost.For<Program>(builder =>
+    /// <summary>Gets the provider selected by Testing configuration and PAPIRFLY_TEST_ overrides.</summary>
+    public StorageProvider Provider { get; private set; }
+
+    /// <summary>Gets structured events emitted by this fixture's application hosts.</summary>
+    public ConcurrentQueue<LogEvent> Logs { get; } = new();
+
+    /// <summary>Starts the API, using a disposable PostgreSQL container when configured.</summary>
+    /// <returns>A task that completes when the container, host and schema are ready.</returns>
+    public async Task InitializeAsync()
     {
-        builder.UseEnvironment("Testing");
-    });
+        var configuration = new ConfigurationBuilder()
+            .SetBasePath(AppContext.BaseDirectory)
+            .AddJsonFile("appsettings.Testing.json", optional: false)
+            .AddEnvironmentVariables("PAPIRFLY_TEST_")
+            .Build();
+        Provider = configuration.GetValue<StorageProvider>("Storage:Provider");
+        if (!Enum.IsDefined(Provider))
+            throw new InvalidOperationException("Testing Storage:Provider must be InMemory or PostgreSql.");
+
+        try
+        {
+            if (Provider == StorageProvider.PostgreSql)
+            {
+                postgres = new PostgreSqlBuilder(configuration["Testcontainers:PostgresImage"] ?? "postgres:17-alpine")
+                    .WithDatabase("papirfly_tests")
+                    .WithUsername("papirfly_test")
+                    .WithPassword(Guid.NewGuid().ToString("N"))
+                    .Build();
+                await postgres.StartAsync();
+            }
+
+            Host = await StartHostAsync();
+        }
+        catch
+        {
+            await DisposeAsync();
+            throw;
+        }
+    }
 
     /// <summary>Clears the host's article store before the next scenario.</summary>
     /// <returns>A task that completes when all stored articles have been removed.</returns>
@@ -26,12 +68,35 @@ public sealed class ApiFixture : IAsyncLifetime
     {
         var factory = Host.Services.GetRequiredService<IDbContextFactory<ArticlesDbContext>>();
         await using var context = await factory.CreateDbContextAsync();
-        await context.Database.EnsureDeletedAsync();
+        if (context.Database.IsRelational())
+            await context.Articles.ExecuteDeleteAsync();
+        else
+            await context.Database.EnsureDeletedAsync();
     }
 
-    /// <summary>Disposes the application host and its services.</summary>
-    /// <returns>A task that completes when the host has shut down.</returns>
-    public async Task DisposeAsync() => await Host.DisposeAsync();
+    /// <summary>Disposes the application host and then removes its test container, if any.</summary>
+    /// <returns>A task that completes after all fixture resources have been released.</returns>
+    public async Task DisposeAsync()
+    {
+        try
+        {
+            if (Host is not null)
+                await Host.DisposeAsync();
+        }
+        finally
+        {
+            if (postgres is not null)
+                await postgres.DisposeAsync();
+        }
+    }
+
+    /// <summary>Restarts the API while retaining the PostgreSQL container to verify database durability.</summary>
+    /// <returns>A task that completes when the replacement host is ready.</returns>
+    public async Task RestartAsync()
+    {
+        await Host.DisposeAsync();
+        Host = await StartHostAsync();
+    }
 
     /// <summary>Sends a raw JSON request through Alba and reads its JSON response.</summary>
     /// <param name="method">GET, POST or PUT.</param>
@@ -60,6 +125,28 @@ public sealed class ApiFixture : IAsyncLifetime
 
         using var document = JsonDocument.Parse(await result.ReadAsTextAsync());
         return new(result.Context.Response.StatusCode, document.RootElement.Clone());
+    }
+
+    private Task<IAlbaHost> StartHostAsync() => AlbaHost.For<Program>(builder =>
+    {
+        builder.UseEnvironment("Testing");
+        builder.ConfigureTestServices(services =>
+        {
+            // Replace the application's storage options through DI before its context factory is resolved.
+            // Never use a configured development/production connection for test writes or cleanup.
+            services.PostConfigure<StorageOptions>(storage =>
+            {
+                storage.Provider = Provider;
+                storage.ConnectionString = postgres?.GetConnectionString();
+            });
+            services.AddSingleton<ILogEventSink>(new CapturingSink(Logs));
+        });
+    });
+
+    private sealed class CapturingSink(ConcurrentQueue<LogEvent> events) : ILogEventSink
+    {
+        /// <inheritdoc />
+        public void Emit(LogEvent logEvent) => events.Enqueue(logEvent);
     }
 }
 

@@ -1,12 +1,18 @@
 # PapirFly
 
 REST API for registering and retrieving shop articles, based on [NET Developer.pdf](NET%20Developer.pdf).
-The solution uses .NET 10, ASP.NET Core controllers, EF Core InMemory, Mapster, Serilog, and Alba + xUnit tests.
+The solution uses .NET 10, ASP.NET Core controllers, EF Core InMemory or PostgreSQL, Mapster, Serilog,
+and Alba + xUnit tests with optional PostgreSQL Testcontainers.
+
+> **A running local Docker installation is required for the PostgreSQL setup below and for PostgreSQL
+> integration tests. Start Docker Desktop in Linux container mode, or a compatible Docker Engine, before
+> selecting PostgreSql. The default InMemory mode requires no Docker.**
 
 ## Getting started
 
 Install the .NET 10 SDK. `global.json` allows the latest installed feature band within SDK version 10.0.
-No database server, Docker installation, or credentials are required.
+All committed configurations default to InMemory, so the following commands need no database server,
+Docker installation, or credentials.
 
 ```sh
 dotnet restore PapirFly.sln --locked-mode
@@ -18,7 +24,59 @@ dotnet run --project src/PapirFly.Api --configuration Release --no-build --urls 
 - OpenAPI document: <http://localhost:5000/swagger/v1/swagger.json>
 - Articles API: <http://localhost:5000/api/articles>
 
-Requests within the same application instance share their data. All data is lost when the instance stops.
+Requests within the same application instance share their data. InMemory data is lost when the host stops;
+PostgreSQL data persists in the configured database across application restarts.
+
+## Environment and storage configuration
+
+The API loads `appsettings.json`, then `appsettings.{Environment}.json`, then environment and command-line
+overrides. Environment files live in `src/PapirFly.Api`:
+
+| File | Purpose | Default storage |
+| --- | --- | --- |
+| `appsettings.json` | Common settings, console logging and storage fallback | `InMemory` |
+| `appsettings.Development.json` | Local development and debug application logging | `InMemory` |
+| `appsettings.Production.json` | Production settings and information-level logging | `InMemory` |
+| `appsettings.Testing.json` | Integration test defaults and Testcontainers image | `InMemory` |
+
+Every file contains a **commented PostgreSQL alternative** next to its active InMemory section. ASP.NET
+Core's configuration reader supports these JSON comments. To use the alternative, replace the active
+`Storage` section; do not leave two active sections with the same key. Environment overrides let you
+switch providers without editing any files.
+
+`Storage:Provider` accepts `InMemory` or `PostgreSql`. PostgreSQL also requires `Storage:ConnectionString`.
+Unknown providers and missing PostgreSQL connection strings fail validation instead of silently selecting
+another store. Keep actual production credentials in deployment configuration rather than committed files.
+
+### Local PostgreSQL
+
+Start the database with a persistent Docker volume:
+
+```sh
+docker run --detach --name papirfly-postgres --publish 5432:5432 --env POSTGRES_DB=papirfly --env POSTGRES_USER=papirfly --env POSTGRES_PASSWORD=papirfly_dev --volume papirfly-postgres-data:/var/lib/postgresql/data postgres:17-alpine
+```
+
+Then start the API with PostgreSQL (PowerShell):
+
+```powershell
+$env:DOTNET_ENVIRONMENT = 'Development'
+$env:Storage__Provider = 'PostgreSql'
+$env:Storage__ConnectionString = 'Host=localhost;Port=5432;Database=papirfly;Username=papirfly;Password=papirfly_dev'
+dotnet run --project src/PapirFly.Api --configuration Release --no-launch-profile --urls http://localhost:5000
+```
+
+`--no-launch-profile` allows the selected environment and URL to take precedence over local launch settings.
+After stopping the API, remove the `Storage__Provider` and `Storage__ConnectionString` environment variables
+to return to the committed InMemory defaults. For an existing database container, use
+`docker start papirfly-postgres` instead of creating it again.
+
+The API applies the committed EF Core migrations at startup; it does not recreate or delete the database.
+The configured account must therefore be able to apply schema changes. Schema and migration history live
+in PostgreSQL, and reapplying initialization after a host restart is safe. Future schema changes should be
+added as migrations in `PapirFly.Infrastructure/Persistence/Migrations`.
+
+The local Docker requirement applies to this local setup and Testcontainers. An application can also connect
+to an already running remote PostgreSQL server by changing the connection string; its host does not need Docker.
 
 ## Solution design
 
@@ -31,7 +89,7 @@ src/
       Queries/               One query per file
     DTOs/                    ArticleInput and ArticleResponse
     Interfaces/              IArticleRepository
-  PapirFly.Infrastructure/    EF Core context and repository implementation
+  PapirFly.Infrastructure/    Storage options, EF Core context, repository and PostgreSQL migrations
   PapirFly.Api/               JSON, Problem Details, Serilog, Swagger and DI configuration
     Controllers/             ArticlesController and its HTTP actions
 tests/
@@ -96,20 +154,24 @@ to enforce the article rules. `ApiExceptionHandler` translates application valid
 and concurrency failures into Problem Details responses. JSON settings belong to `AddControllers().AddJsonOptions`,
 which also supplies the naming configuration used by Swagger.
 
-### Repository pattern and EF Core InMemory
+### Repository pattern and configurable EF Core storage
 
 `IArticleRepository` exposes only operations needed by article use cases. It does not expose
 `IQueryable`, `DbSet`, or `DbContext`. `ArticleRepository` implements both searches and writes; an additional
 generic CRUD repository or Unit of Work wrapper would duplicate the existing EF Core responsibilities.
 
-`IDbContextFactory<ArticlesDbContext>` creates a short-lived context for each operation. Contexts within
-one host share an `InMemoryDatabaseRoot`, while separate hosts have separate stores. Concurrent operations
-never share a context.
+`IDbContextFactory<ArticlesDbContext>` creates a short-lived context for each operation. `StorageOptions`
+is bound and validated through DI. The same repository uses either EF Core InMemory or the Npgsql provider,
+selected when the context factory resolves its options. The application and domain layers are unchanged.
 
-InMemory is the configured storage provider, as requested, replacing the PDF's optional SQL storage task.
-It does not provide durability across runs or a transaction spanning a batch. A future SQL provider
-would require registration changes, migrations, and verification of query translation: the current
-`Contains(..., StringComparison.OrdinalIgnoreCase)` uses InMemory's query capabilities.
+InMemory contexts within one host share an `InMemoryDatabaseRoot`; different hosts have separate stores.
+PostgreSQL contexts connect to the configured SQL database. Concurrent operations never share a context.
+The initial migration creates the article table, generated integer IDs, field lengths, numeric prices,
+and UUID version values. The existing EF concurrency-token check works with both providers.
+
+Name search uses ordinal case-insensitive `Contains` with InMemory and server-side `ILIKE` with PostgreSQL.
+PostgreSQL patterns escape `%`, `_`, and backslash so those characters remain literal user input.
+PostgreSQL case folding follows the database locale. Category matching remains an exact, case-sensitive match.
 
 ### Mapster and shared rules
 
@@ -158,7 +220,7 @@ The implementation consistently requires a JSON number for updates as well as cr
 
 ### Search
 
-- `name` matches a substring using ordinal, case-insensitive comparison.
+- `name` matches a substring case-insensitively; SQL wildcard characters are treated literally.
 - `category` matches the whole value, case-sensitively; the assignment only requires case-insensitive name matching.
 - Supplied filters are combined with AND. Without filters, the API returns all articles ordered by ID.
 - URL-encode values, for example `?name=branded&category=USB%20flash%20drive`.
@@ -172,7 +234,8 @@ batch returns `[]`; a null item is invalid.
 After validation, `Parallel.ForEachAsync` runs at most four writers, each with its own context. EF generates
 the IDs. Responses preserve input order even if IDs are assigned in a different order. Cancellation is
 propagated to outstanding operations. The no-writes guarantee applies to invalid input; storage failure or
-cancellation during a valid batch may leave partial writes because InMemory has no batch transaction.
+cancellation during a valid batch may leave partial writes. Both providers commit each article separately;
+the concurrent batch is not wrapped in a shared transaction.
 
 ### Optimistic concurrency
 
@@ -232,10 +295,11 @@ used by IDE tooling. The OpenAPI response schema is named `ArticleResponse`.
 ## Logging with Serilog
 
 `Serilog.AspNetCore` handles application and ASP.NET Core logs. Services can use the standard injected
-`ILogger<T>`. Configuration is read from the `Serilog` section of `src/PapirFly.Api/appsettings.json`:
+`ILogger<T>`. Configuration is read from the `Serilog` section of the common and environment-specific appsettings files:
 
 - JSON events are written to the console with an `Application: PapirFly.Api` property.
-- The default minimum level is `Information`; ASP.NET Core and EF Core sources are limited to `Warning`.
+- The default minimum level is `Information`, overridden to `Debug` in Development; ASP.NET Core and EF Core
+  sources are limited to `Warning`. Testing additionally suppresses information-level host lifetime events.
 - `UseSerilogRequestLogging` records the HTTP method, request path, final response status, and elapsed time.
 - The logger is owned by its application host and disposed with it. Request logging explicitly uses the
   same DI logger, so parallel test hosts do not interfere through a global static logger.
@@ -247,44 +311,83 @@ Log levels can be overridden through configuration, for example `Serilog__Minimu
 ## Testing
 
 ```sh
-# All tests
+# All tests with the committed InMemory defaults (no Docker required)
 dotnet test PapirFly.sln --configuration Release
 
-# Integration tests only
+# Integration tests only, using the configured provider
 dotnet test tests/PapirFly.IntegrationTests --configuration Release
 ```
 
-Alba runs the real ASP.NET Core controller pipeline through an in-memory TestServer. Tests use the actual
-DI configuration, validation, Mapster, and EF repository. Raw JSON scenarios verify field names, numeric
-values, error statuses, and persisted results without mocking handlers or storage.
+### PostgreSQL integration tests
 
-A host is shared within each fixture-backed test class, and the article store is cleared before each
-article test. Separate hosts have isolated stores. Coverage includes all five article operations,
-invalid JSON, validation boundaries, search and URL encoding, batch validation before writes, concurrent
-creates, update conflicts, host isolation, OpenAPI descriptions, Swagger UI, and structured Serilog events.
-A separate detached-snapshot scenario checks EF concurrency enforcement independently of the handler's
-preliminary version comparison. Unit tests cover validation rules and boundary values.
+**Docker must be running locally.** You do not need to start the development database above: Testcontainers
+creates its own PostgreSQL containers, random host ports, generated credentials, and isolated databases.
+
+Select PostgreSQL without editing the default configuration (PowerShell):
+
+```powershell
+$env:PAPIRFLY_TEST_Storage__Provider = 'PostgreSql'
+dotnet test tests/PapirFly.IntegrationTests --configuration Release
+Remove-Item Env:PAPIRFLY_TEST_Storage__Provider
+```
+
+On Bash:
+
+```sh
+PAPIRFLY_TEST_Storage__Provider=PostgreSql dotnet test tests/PapirFly.IntegrationTests --configuration Release
+```
+
+Set the same override to `InMemory` to explicitly run without Docker, or switch `Storage:Provider` in
+`appsettings.Testing.json` using its commented example. Removing the override restores the file's selection.
+`Testcontainers:PostgresImage` selects the image, currently `postgres:17-alpine`; it can also be overridden
+as `PAPIRFLY_TEST_Testcontainers__PostgresImage`. The first SQL run may need to download Docker images.
+
+`ApiFixture` loads `appsettings.Testing.json` plus environment variables prefixed with `PAPIRFLY_TEST_`.
+Every Alba host runs in the `Testing` environment. In PostgreSQL mode, the fixture starts a container and
+uses `ConfigureTestServices` with `PostConfigure<StorageOptions>` to inject its connection string before
+the context factory is resolved. InMemory mode overrides the same DI options without starting a container.
+Test cleanup never uses a configured development or production connection string. A requested PostgreSQL
+run fails if Docker is unavailable; it does not silently fall back or skip SQL tests.
+
+Alba exercises the same controller pipeline, DI, validation, Mapster and repository with either provider.
+TestServer is the in-memory HTTP host; PostgreSQL is still a real SQL server in its container. A fixture
+shares its host and, in SQL mode, its container within a test class. Other fixtures have isolated stores.
+Before each article test, PostgreSQL rows are deleted without dropping the schema or migration history;
+InMemory storage is cleared. Fixture disposal shuts down the host and removes its container. A restart
+scenario retains the SQL container to verify that articles survive restarting the API.
+
+Coverage includes all five article operations, invalid JSON, validation boundaries, search and literal SQL
+metacharacters, batch validation before writes, concurrent creates, update conflicts, store isolation,
+the actual selected EF provider, migrations, PostgreSQL durability, OpenAPI descriptions, Swagger UI and
+structured Serilog events. Detached-snapshot tests exercise concurrency enforcement at save time.
+Configuration tests verify all environment defaults, SQL registration and invalid configuration rejection.
+Unit tests cover validation rules and boundary values.
 
 ## GitHub Actions
 
 [`.github/workflows/build.yml`](.github/workflows/build.yml) runs on pushes, pull requests, and manual dispatch.
-On Ubuntu it:
+It uses an Ubuntu matrix with **InMemory and PostgreSql** jobs. Each job:
 
 1. Installs .NET 10 and restores the NuGet cache.
 2. Runs `dotnet restore --locked-mode` against the committed `packages.lock.json` files.
 3. Builds the solution in Release mode with compiler warnings treated as errors, including missing XML documentation.
-4. Runs unit tests and then the full Alba integration suite. A test failure fails the build job.
-5. Uploads available TRX results as the `test-results` artifact, including on test failure, with 14-day retention.
+4. Runs unit tests and the full Alba integration suite with `PAPIRFLY_TEST_Storage__Provider` set to its matrix
+   provider. The SQL job uses the runner's Docker daemon and disposable Testcontainers. A test failure fails the job.
+5. Uploads available TRX results as `test-results-InMemory` or `test-results-PostgreSql`, including on test failure,
+   with 14-day retention.
 
 Package versions are centralized in `Directory.Packages.props`. After changing dependencies, run
-`dotnet restore` and include the updated lock files with the change. CI needs no database service or
-custom secrets and requests only `contents: read` permission.
+`dotnet restore` and include the updated lock files with the change. CI needs no separately provisioned
+database or custom secrets; the PostgreSQL job requires Docker, available on GitHub-hosted Ubuntu runners.
+The workflow requests only `contents: read` permission.
 
 ## References
 
 - [Alba: HTTP integration scenarios](https://jasperfx.github.io/alba/guide/gettingstarted.html)
 - [Mapster: mapping configuration](https://github.com/MapsterMapper/Mapster/wiki/Configuration)
 - [EF Core: optimistic concurrency](https://learn.microsoft.com/en-us/ef/core/saving/concurrency)
+- [Npgsql: SQL query translations](https://www.npgsql.org/efcore/mapping/translations.html)
+- [Testcontainers: PostgreSQL module](https://dotnet.testcontainers.org/modules/postgres/)
 - [ASP.NET Core: controller-based web APIs](https://learn.microsoft.com/en-us/aspnet/core/web-api/?view=aspnetcore-10.0)
 - [Serilog: ASP.NET Core integration](https://github.com/serilog/serilog-aspnetcore)
 - [GitHub Actions: building and testing .NET](https://docs.github.com/en/actions/tutorials/build-and-test-code/net)

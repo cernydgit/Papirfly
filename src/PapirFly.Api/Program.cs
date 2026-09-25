@@ -13,7 +13,7 @@ builder.Services.AddSerilog((services, configuration) => configuration
     .ReadFrom.Services(services)
     .Enrich.FromLogContext(), preserveStaticLogger: true);
 builder.Services.AddApplication();
-builder.Services.AddInfrastructure();
+builder.Services.AddInfrastructure(builder.Configuration);
 builder.Services.AddControllers().AddJsonOptions(options =>
 {
     options.JsonSerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower;
@@ -30,6 +30,7 @@ builder.Services.AddSwaggerGen(options =>
 });
 
 var app = builder.Build();
+await app.Services.InitializeStorageAsync();
 app.UseSerilogRequestLogging(options => options.Logger = app.Services.GetRequiredService<Serilog.ILogger>());
 app.UseExceptionHandler();
 app.UseStatusCodePages();
