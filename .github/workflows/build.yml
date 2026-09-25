@@ -39,6 +39,7 @@ jobs:
         run: dotnet restore PapirFly.sln --locked-mode
 
       - name: Build
+        id: build
         run: dotnet build PapirFly.sln --configuration Release --no-restore
 
       - name: Unit tests
@@ -48,10 +49,26 @@ jobs:
           --logger "trx;LogFileName=unit.trx" --results-directory TestResults
 
       - name: Alba integration tests
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: >-
           dotnet test tests/PapirFly.IntegrationTests/PapirFly.IntegrationTests.csproj
           --configuration Release --no-build --no-restore
           --logger "trx;LogFileName=integration.trx" --results-directory TestResults
+
+      - name: Test report
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        uses: dorny/test-reporter@v3
+        with:
+          name: Tests (${{ matrix.storage }})
+          report-title: Tests (${{ matrix.storage }})
+          path: TestResults/*.trx
+          reporter: dotnet-trx
+          use-actions-summary: 'true'
+          list-suites: all
+          list-tests: all
+          collapsed: auto
+          fail-on-error: 'true'
+          fail-on-empty: 'true'
 
       - name: Upload test results
         if: always()

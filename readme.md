@@ -373,8 +373,22 @@ It uses an Ubuntu matrix with **InMemory and PostgreSql** jobs. Each job:
 3. Builds the solution in Release mode with compiler warnings treated as errors, including missing XML documentation.
 4. Runs unit tests and the full Alba integration suite with `PAPIRFLY_TEST_Storage__Provider` set to its matrix
    provider. The SQL job uses the runner's Docker daemon and disposable Testcontainers. A test failure fails the job.
-5. Uploads available TRX results as `test-results-InMemory` or `test-results-PostgreSql`, including on test failure,
+5. Publishes a visual test report in the run's **Summary**, separately for each storage provider.
+6. Uploads available TRX results as `test-results-InMemory` or `test-results-PostgreSql`, including on test failure,
    with 14-day retention.
+
+### Viewing test results
+
+Open [Actions → Build and test](https://github.com/cernydgit/Papirfly/actions/workflows/build.yml), select a run,
+and open **Summary**. The **Tests (InMemory)** and **Tests (PostgreSql)** reports show passed, failed and skipped
+counts, execution times, and expandable suites and individual test results. Successful report details are
+collapsed by default; failed reports expand automatically. `unit.trx` and `integration.trx` identify the two
+test suites. Failure details include the captured error messages and stack traces.
+
+Reports are generated from the existing TRX files using [Test Reporter](https://github.com/dorny/test-reporter).
+After a successful build, integration tests and reporting run even if unit tests fail; failures still fail
+the job. If the build fails before tests can run, there is no test report. Raw logs remain available under
+the **Unit tests** and **Alba integration tests** steps, and TRX downloads remain in **Artifacts**.
 
 Package versions are centralized in `Directory.Packages.props`. After changing dependencies, run
 `dotnet restore` and include the updated lock files with the change. CI needs no separately provisioned
