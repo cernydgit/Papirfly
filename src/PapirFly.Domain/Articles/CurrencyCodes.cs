@@ -2,6 +2,7 @@ using System.Collections.Frozen;
 
 namespace PapirFly.Domain.Articles;
 
+/// <summary>Provides the ISO 4217 List One snapshot published by SIX on 2026-09-17.</summary>
 public static class CurrencyCodes
 {
     // ISO 4217 List One, published 2026-09-17 by SIX (the maintenance agency).
@@ -19,5 +20,8 @@ public static class CurrencyCodes
         XBB XBC XBD XCD XCG XDR XOF XPD XPF XPT XSU XTS XUA XXX YER ZAR ZMW ZWG
         """.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).ToFrozenSet(StringComparer.Ordinal);
 
+    /// <summary>Checks whether a code is present in the currency snapshot.</summary>
+    /// <param name="code">The uppercase alphabetic ISO 4217 code to check.</param>
+    /// <returns>True for a listed code; otherwise false. Comparison is ordinal and case-sensitive.</returns>
     public static bool Contains(string code) => Codes.Contains(code);
 }

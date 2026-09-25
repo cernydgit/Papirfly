@@ -3,9 +3,12 @@ using System.Text.Json.Nodes;
 using Alba;
 using Microsoft.Extensions.DependencyInjection;
 using PapirFly.Application.Articles;
+using PapirFly.Application.Interfaces;
 
 namespace PapirFly.IntegrationTests;
 
+/// <summary>Verifies article endpoints, concurrent writes and the real persistence boundary.</summary>
+/// <param name="api">The application host shared by this test class.</param>
 public sealed class ArticlesTests(ApiFixture api) : IClassFixture<ApiFixture>, IAsyncLifetime
 {
     private const string ArticlesUrl = "/api/articles";
@@ -15,9 +18,15 @@ public sealed class ArticlesTests(ApiFixture api) : IClassFixture<ApiFixture>, I
          "category":"USB flash drive","price":17.89,"currency":"NOK"}
         """;
 
+    /// <summary>Resets the article store before each test.</summary>
+    /// <returns>A task that completes after the store has been cleared.</returns>
     public Task InitializeAsync() => api.ResetAsync();
+    /// <summary>Completes per-test cleanup; the class fixture owns the host lifetime.</summary>
+    /// <returns>An already completed task.</returns>
     public Task DisposeAsync() => Task.CompletedTask;
 
+    /// <summary>Verifies generated fields and an exact create/read round trip.</summary>
+    /// <returns>A task that completes after the HTTP assertions.</returns>
     [Fact]
     public async Task Create_returns_the_contract_and_get_retrieves_the_same_article()
     {
@@ -35,6 +44,8 @@ public sealed class ArticlesTests(ApiFixture api) : IClassFixture<ApiFixture>, I
         Assert.Equal(created.GetRawText(), loaded.Json.GetRawText());
     }
 
+    /// <summary>Verifies that free articles can omit currency and category.</summary>
+    /// <returns>A task that completes after the response assertions.</returns>
     [Fact]
     public async Task Create_accepts_free_articles_and_omits_missing_optional_fields()
     {
@@ -44,6 +55,8 @@ public sealed class ArticlesTests(ApiFixture api) : IClassFixture<ApiFixture>, I
         Assert.False(result.TryGetProperty("category", out _));
     }
 
+    /// <summary>Verifies exact field limits and decimal precision through the HTTP contract.</summary>
+    /// <returns>A task that completes after the response assertions.</returns>
     [Fact]
     public async Task Create_accepts_exact_length_limits_and_decimal_precision()
     {
@@ -57,6 +70,8 @@ public sealed class ArticlesTests(ApiFixture api) : IClassFixture<ApiFixture>, I
         Assert.Equal(2048, created.GetProperty("description").GetString()!.Length);
     }
 
+    /// <summary>Provides malformed and semantically invalid create payloads.</summary>
+    /// <returns>One raw JSON argument per invalid case.</returns>
     public static IEnumerable<object[]> InvalidArticles()
     {
         foreach (var field in new[] { "name", "description", "price", "currency" })
@@ -85,6 +100,9 @@ public sealed class ArticlesTests(ApiFixture api) : IClassFixture<ApiFixture>, I
             yield return [invalid];
     }
 
+    /// <summary>Verifies that invalid create requests return 400 without persisting an article.</summary>
+    /// <param name="json">The malformed or invalid request body.</param>
+    /// <returns>A task that completes after the error and persistence assertions.</returns>
     [Theory]
     [MemberData(nameof(InvalidArticles))]
     public async Task Create_rejects_invalid_input_without_writing(string json)
@@ -94,6 +112,9 @@ public sealed class ArticlesTests(ApiFixture api) : IClassFixture<ApiFixture>, I
         Assert.Empty((await api.Send("GET", ArticlesUrl)).Json.EnumerateArray());
     }
 
+    /// <summary>Verifies 404 responses for unknown or invalid article identifiers.</summary>
+    /// <param name="id">The route value to look up.</param>
+    /// <returns>A task that completes after the status assertion.</returns>
     [Theory]
     [InlineData("999")]
     [InlineData("0")]
@@ -104,6 +125,10 @@ public sealed class ArticlesTests(ApiFixture api) : IClassFixture<ApiFixture>, I
         await api.Send("GET", $"{ArticlesUrl}/{id}", expectedStatus: 404);
     }
 
+    /// <summary>Verifies name, category and combined filters together with result ordering.</summary>
+    /// <param name="query">The query string to submit.</param>
+    /// <param name="expectedCount">The expected number of matching articles.</param>
+    /// <returns>A task that completes after the search assertions.</returns>
     [Theory]
     [InlineData("", 4)]
     [InlineData("?name=bRaNdEd", 3)]
@@ -126,12 +151,16 @@ public sealed class ArticlesTests(ApiFixture api) : IClassFixture<ApiFixture>, I
             Assert.Equal("Branded Drinking Mug", articles[0].GetProperty("name").GetString());
     }
 
+    /// <summary>Verifies that an empty database is represented by an empty JSON array.</summary>
+    /// <returns>A task that completes after the response assertion.</returns>
     [Fact]
     public async Task Search_returns_an_empty_array_for_an_empty_store()
     {
         Assert.Equal("[]", (await api.Send("GET", ArticlesUrl)).Json.GetRawText());
     }
 
+    /// <summary>Verifies decoding of Unicode and reserved characters in query parameters.</summary>
+    /// <returns>A task that completes after the search assertion.</returns>
     [Fact]
     public async Task Search_decodes_url_encoded_unicode_and_reserved_characters()
     {
@@ -146,6 +175,8 @@ public sealed class ArticlesTests(ApiFixture api) : IClassFixture<ApiFixture>, I
         Assert.Single((await api.Send("GET", ArticlesUrl + query)).Json.EnumerateArray());
     }
 
+    /// <summary>Verifies batch ordering, generated identifiers and persisted contents.</summary>
+    /// <returns>A task that completes after the batch and read-back assertions.</returns>
     [Fact]
     public async Task Batch_preserves_input_order_and_persists_generated_ids()
     {
@@ -162,6 +193,8 @@ public sealed class ArticlesTests(ApiFixture api) : IClassFixture<ApiFixture>, I
             stored.Select(a => a.GetRawText()));
     }
 
+    /// <summary>Verifies indexed batch errors and that validation completes before any writes.</summary>
+    /// <returns>A task that completes after the error and persistence assertions.</returns>
     [Fact]
     public async Task Batch_validates_all_items_before_writing_and_reports_indexed_errors()
     {
@@ -173,6 +206,9 @@ public sealed class ArticlesTests(ApiFixture api) : IClassFixture<ApiFixture>, I
         Assert.Empty((await api.Send("GET", ArticlesUrl)).Json.EnumerateArray());
     }
 
+    /// <summary>Verifies rejection of invalid batch shapes and element values.</summary>
+    /// <param name="json">The invalid batch request body.</param>
+    /// <returns>A task that completes after the error and persistence assertions.</returns>
     [Theory]
     [InlineData("null")]
     [InlineData("{}")]
@@ -185,12 +221,16 @@ public sealed class ArticlesTests(ApiFixture api) : IClassFixture<ApiFixture>, I
         Assert.Empty((await api.Send("GET", ArticlesUrl)).Json.EnumerateArray());
     }
 
+    /// <summary>Verifies that an empty batch succeeds with an empty response array.</summary>
+    /// <returns>A task that completes after the response assertion.</returns>
     [Fact]
     public async Task Empty_batch_returns_an_empty_array()
     {
         Assert.Equal("[]", (await api.Send("POST", BatchUrl, "[]")).Json.GetRawText());
     }
 
+    /// <summary>Verifies distinct generated identifiers when single and batch requests overlap.</summary>
+    /// <returns>A task that completes after all concurrent requests and persistence assertions.</returns>
     [Fact]
     public async Task Parallel_single_and_batch_requests_generate_unique_ids_without_lost_writes()
     {
@@ -202,6 +242,8 @@ public sealed class ArticlesTests(ApiFixture api) : IClassFixture<ApiFixture>, I
         Assert.Equal(30, articles.Select(a => a.GetProperty("article_id").GetInt32()).Distinct().Count());
     }
 
+    /// <summary>Verifies replacement semantics, clearing of optional fields and version rotation.</summary>
+    /// <returns>A task that completes after the update and read-back assertions.</returns>
     [Fact]
     public async Task Update_replaces_fields_clears_omitted_optionals_and_rotates_version()
     {
@@ -224,6 +266,8 @@ public sealed class ArticlesTests(ApiFixture api) : IClassFixture<ApiFixture>, I
         Assert.Equal(updated.GetRawText(), (await api.Send("GET", Url(created))).Json.GetRawText());
     }
 
+    /// <summary>Verifies rejection of a stale version and acceptance of the next current version.</summary>
+    /// <returns>A task that completes after the conflict and update assertions.</returns>
     [Fact]
     public async Task Update_with_stale_version_returns_conflict_and_keeps_the_winning_data()
     {
@@ -236,6 +280,8 @@ public sealed class ArticlesTests(ApiFixture api) : IClassFixture<ApiFixture>, I
         await api.Send("PUT", Url(created), UpdatePayload(winner.Json, "Next update"));
     }
 
+    /// <summary>Verifies that only one of two updates sharing a version succeeds.</summary>
+    /// <returns>A task that completes after both writers and the read-back assertion.</returns>
     [Fact]
     public async Task Two_writers_using_the_same_version_have_exactly_one_winner()
     {
@@ -248,6 +294,8 @@ public sealed class ArticlesTests(ApiFixture api) : IClassFixture<ApiFixture>, I
         Assert.Equal(winner.Json.GetRawText(), (await api.Send("GET", Url(created))).Json.GetRawText());
     }
 
+    /// <summary>Verifies that EF rejects a stale snapshot even without the handler's preliminary check.</summary>
+    /// <returns>A task that completes after the repository and HTTP read-back assertions.</returns>
     [Fact]
     public async Task Ef_concurrency_token_rejects_a_stale_detached_snapshot_at_save_time()
     {
@@ -265,6 +313,8 @@ public sealed class ArticlesTests(ApiFixture api) : IClassFixture<ApiFixture>, I
         Assert.Equal("Winner", (await api.Send("GET", Url(created))).Json.GetProperty("name").GetString());
     }
 
+    /// <summary>Verifies a valid update request returns 404 for a missing article.</summary>
+    /// <returns>A task that completes after the status assertion.</returns>
     [Fact]
     public async Task Update_missing_article_returns_not_found()
     {
@@ -273,6 +323,9 @@ public sealed class ArticlesTests(ApiFixture api) : IClassFixture<ApiFixture>, I
         await api.Send("PUT", ArticlesUrl + "/999", input.ToJsonString(), 404);
     }
 
+    /// <summary>Verifies that invalid updates preserve the previously stored article.</summary>
+    /// <param name="testCase">The invalid field or version case to exercise.</param>
+    /// <returns>A task that completes after the error and read-back assertions.</returns>
     [Theory]
     [InlineData("missing-version")]
     [InlineData("empty-version")]
@@ -299,6 +352,8 @@ public sealed class ArticlesTests(ApiFixture api) : IClassFixture<ApiFixture>, I
         Assert.Equal(created.GetRawText(), (await api.Send("GET", Url(created))).Json.GetRawText());
     }
 
+    /// <summary>Verifies that different application hosts do not share InMemory data.</summary>
+    /// <returns>A task that completes after the independent-host assertions.</returns>
     [Fact]
     public async Task Application_hosts_have_isolated_in_memory_stores()
     {

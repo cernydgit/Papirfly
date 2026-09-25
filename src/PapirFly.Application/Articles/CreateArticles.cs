@@ -1,13 +1,22 @@
 using MapsterMapper;
+using PapirFly.Application.Articles.Commands;
+using PapirFly.Application.DTOs;
+using PapirFly.Application.Interfaces;
 using PapirFly.Domain.Articles;
 
 namespace PapirFly.Application.Articles;
 
-public sealed record CreateArticlesCommand(IReadOnlyList<CreateArticleCommand?> Articles);
-
+/// <summary>Validates an entire batch before storing its articles concurrently.</summary>
+/// <param name="repository">The article persistence boundary.</param>
+/// <param name="mapper">The configured DTO/entity mapper.</param>
 public sealed class CreateArticlesHandler(IArticleRepository repository, IMapper mapper)
 {
-    public async Task<ArticleDto[]> Handle(CreateArticlesCommand command, CancellationToken cancellationToken)
+    /// <summary>Creates the batch after validating all its items.</summary>
+    /// <param name="command">The ordered batch of input articles.</param>
+    /// <param name="cancellationToken">Cancels outstanding writes.</param>
+    /// <returns>The stored articles in input order, including their generated identifiers and versions.</returns>
+    /// <exception cref="ArticleValidationException">An item is invalid; no writes are started.</exception>
+    public async Task<ArticleResponse[]> Handle(CreateArticlesCommand command, CancellationToken cancellationToken)
     {
         var errors = new Dictionary<string, string[]>();
         for (var i = 0; i < command.Articles.Count; i++)
@@ -22,6 +31,6 @@ public sealed class CreateArticlesHandler(IArticleRepository repository, IMapper
 
         var articles = mapper.Map<Article[]>(command.Articles);
         await repository.AddConcurrentlyAsync(articles, cancellationToken);
-        return mapper.Map<ArticleDto[]>(articles);
+        return mapper.Map<ArticleResponse[]>(articles);
     }
 }

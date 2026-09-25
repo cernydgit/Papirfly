@@ -2,8 +2,12 @@ using Alba;
 
 namespace PapirFly.IntegrationTests;
 
+/// <summary>Verifies the generated OpenAPI contract and the Swagger user interface.</summary>
+/// <param name="api">The real application fixture.</param>
 public sealed class DocumentationTests(ApiFixture api) : IClassFixture<ApiFixture>
 {
+    /// <summary>Checks operation descriptions, response schemas and model XML documentation.</summary>
+    /// <returns>A task that completes after the OpenAPI assertions.</returns>
     [Fact]
     public async Task Swagger_documents_every_article_operation_and_snake_case_contract()
     {
@@ -24,11 +28,17 @@ public sealed class DocumentationTests(ApiFixture api) : IClassFixture<ApiFixtur
         }
 
         var schemas = document.GetProperty("components").GetProperty("schemas");
-        Assert.True(schemas.GetProperty("ArticleDto").GetProperty("properties").TryGetProperty("article_id", out _));
+        Assert.True(schemas.GetProperty("ArticleResponse").GetProperty("properties").TryGetProperty("article_id", out _));
         Assert.False(schemas.GetProperty("CreateArticleCommand").GetProperty("properties").TryGetProperty("article_id", out _));
         Assert.True(schemas.GetProperty("UpdateArticleCommand").GetProperty("properties").TryGetProperty("version", out _));
+        var name = schemas.GetProperty("CreateArticleCommand").GetProperty("properties").GetProperty("name");
+        Assert.Contains("64 characters", name.GetProperty("description").GetString());
+        var version = schemas.GetProperty("UpdateArticleCommand").GetProperty("properties").GetProperty("version");
+        Assert.Contains("concurrency token", version.GetProperty("description").GetString());
     }
 
+    /// <summary>Checks that the Swagger UI page is served successfully.</summary>
+    /// <returns>A task that completes after the page assertions.</returns>
     [Fact]
     public async Task Swagger_ui_is_available()
     {

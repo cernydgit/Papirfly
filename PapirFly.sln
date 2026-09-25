@@ -1,7 +1,7 @@
 ﻿
 Microsoft Visual Studio Solution File, Format Version 12.00
-# Visual Studio Version 17
-VisualStudioVersion = 17.0.31903.59
+# Visual Studio Version 18
+VisualStudioVersion = 18.10.12217.157 stable
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{827E0CD3-B72D-47B6-A68D-7590B98EB39B}"
 EndProject
@@ -18,6 +18,11 @@ EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PapirFly.UnitTests", "tests\PapirFly.UnitTests\PapirFly.UnitTests.csproj", "{BDF05662-3D9D-4937-AAC8-3B5319C7E996}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PapirFly.IntegrationTests", "tests\PapirFly.IntegrationTests\PapirFly.IntegrationTests.csproj", "{C73761DB-4DEB-4DF7-B59D-39140BA65AB9}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution Items", "{B352CB0D-6188-44E9-88B8-19928E334045}"
+	ProjectSection(SolutionItems) = preProject
+		readme.md = readme.md
+	EndProjectSection
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -112,5 +117,8 @@ Global
 		{8C3B7DFD-DC72-4761-8007-23F68EEDE47E} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
 		{BDF05662-3D9D-4937-AAC8-3B5319C7E996} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
 		{C73761DB-4DEB-4DF7-B59D-39140BA65AB9} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {ED052459-B733-4D0A-8C4D-1E836DFC328E}
 	EndGlobalSection
 EndGlobal

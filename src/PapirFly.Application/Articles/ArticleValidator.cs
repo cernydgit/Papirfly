@@ -1,9 +1,15 @@
+using PapirFly.Application.Articles.Commands;
+using PapirFly.Application.DTOs;
 using PapirFly.Domain.Articles;
 
 namespace PapirFly.Application.Articles;
 
+/// <summary>Applies shared article validation rules to create and update inputs.</summary>
 public static class ArticleValidator
 {
+    /// <summary>Collects all article validation errors without changing the input.</summary>
+    /// <param name="article">The input to validate; null is reported as a missing article.</param>
+    /// <returns>Errors keyed by contract field name, or an empty dictionary when valid.</returns>
     public static Dictionary<string, string[]> Validate(ArticleInput? article)
     {
         var errors = new Dictionary<string, string[]>();
@@ -42,6 +48,9 @@ public static class ArticleValidator
         }
     }
 
+    /// <summary>Rejects an input if any shared article validation rule fails.</summary>
+    /// <param name="article">The article to validate.</param>
+    /// <exception cref="ArticleValidationException">The input contains one or more validation errors.</exception>
     public static void EnsureValid(ArticleInput? article)
     {
         var errors = Validate(article);

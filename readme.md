@@ -1,12 +1,12 @@
 # PapirFly
 
-REST API pro evidenci a vyhledávání obchodních artiklů podle zadání [NET Developer.pdf](NET%20Developer.pdf).
-Řešení používá .NET 10, ASP.NET Core Minimal APIs, EF Core InMemory, Mapster a integrační testy Alba + xUnit.
+REST API for registering and retrieving shop articles, based on [NET Developer.pdf](NET%20Developer.pdf).
+The solution uses .NET 10, ASP.NET Core controllers, EF Core InMemory, Mapster, Serilog, and Alba + xUnit tests.
 
-## Spuštění
+## Getting started
 
-Je potřeba .NET 10 SDK. `global.json` dovoluje aktuální feature verzi SDK řady 10.0.
-Není potřeba databázový server, Docker ani přístupové údaje.
+Install the .NET 10 SDK. `global.json` allows the latest installed feature band within SDK version 10.0.
+No database server, Docker installation, or credentials are required.
 
 ```sh
 dotnet restore PapirFly.sln --locked-mode
@@ -15,27 +15,33 @@ dotnet run --project src/PapirFly.Api --configuration Release --no-build --urls 
 ```
 
 - Swagger UI: <http://localhost:5000/swagger/index.html>
-- OpenAPI: <http://localhost:5000/swagger/v1/swagger.json>
-- API: <http://localhost:5000/api/articles>
+- OpenAPI document: <http://localhost:5000/swagger/v1/swagger.json>
+- Articles API: <http://localhost:5000/api/articles>
 
-Data jsou společná pro všechny požadavky jedné instance aplikace a po jejím ukončení se ztratí.
+Requests within the same application instance share their data. All data is lost when the instance stops.
 
-## Design a závislosti
+## Solution design
 
 ```text
 src/
-  PapirFly.Domain/          Entita Article, limity polí, číselník měn
-  PapirFly.Application/     Commands, queries, handlery, DTO, validace, repository rozhraní, Mapster
-  PapirFly.Infrastructure/  EF Core DbContext a implementace repository
-  PapirFly.Api/             HTTP endpointy, JSON kontrakt, Problem Details, Swagger, sestavení DI
+  PapirFly.Domain/            Article entity, field limits, ISO currency codes
+  PapirFly.Application/
+    Articles/                Use case handlers, shared validation and exceptions
+      Commands/              One command per file
+      Queries/               One query per file
+    DTOs/                    ArticleInput and ArticleResponse
+    Interfaces/              IArticleRepository
+  PapirFly.Infrastructure/    EF Core context and repository implementation
+  PapirFly.Api/               JSON, Problem Details, Serilog, Swagger and DI configuration
+    Controllers/             ArticlesController and its HTTP actions
 tests/
-  PapirFly.UnitTests/       Izolované testy validačních pravidel
-  PapirFly.IntegrationTests/ Celá HTTP pipeline přes Alba a skutečné EF Core InMemory úložiště
+  PapirFly.UnitTests/         Validation rules and boundary cases
+  PapirFly.IntegrationTests/  Full HTTP pipeline, persistence, OpenAPI and logging
 ```
 
 ### Clean Architecture
 
-Závislosti projektů směřují k aplikačnímu a doménovému jádru:
+Project dependencies point towards the application and domain:
 
 ```mermaid
 flowchart LR
@@ -45,125 +51,143 @@ flowchart LR
     Application --> Domain
 ```
 
-`Domain` neodkazuje na žádný jiný projekt ani externí balíček. `Application` nezná HTTP, ASP.NET Core,
-EF Core ani konkrétní databázi. Pracuje s rozhraním `IArticleRepository`. `Infrastructure` toto rozhraní
-implementuje. `Api` skládá implementace v dependency injection a převádí HTTP požadavky na volání handlerů.
-Reference API na infrastrukturu slouží k její registraci při startu; endpointy s DbContextem nepracují.
+`Domain` has no project or package dependencies. `Application` does not depend on HTTP, ASP.NET Core,
+EF Core, or a particular database. It uses `IArticleRepository`, which `Infrastructure` implements.
+`Api` is the composition root: it registers implementations and translates HTTP requests into handler calls.
+Its infrastructure reference is used for registration; the controller does not access the context.
 
-Doména tohoto zadání má jednu jednoduchou entitu. Samostatné agregáty, doménové události ani další servisní
-vrstvy by nepřidaly potřebné chování, proto zde nejsou.
+The domain has one simple entity. Additional aggregate hierarchies, domain events, and service layers
+are unnecessary for its current behavior.
+
+DTOs live in `PapirFly.Application.DTOs`; persistence interfaces live in `PapirFly.Application.Interfaces`.
+Command and query models have separate `PapirFly.Application.Articles.Commands` and
+`PapirFly.Application.Articles.Queries` namespaces. Each command and query has its own file named after
+the type. Handlers remain in `PapirFly.Application.Articles`.
 
 ### CQRS
 
-Zápisy a čtení mají oddělené modely a handlery:
+Reads and writes have separate models and handlers:
 
-| Operace | Model a handler |
-| --- | --- |
-| Vytvoření artiklu | `CreateArticleCommand`, `CreateArticleHandler` |
-| Souběžné vytvoření dávky | `CreateArticlesCommand`, `CreateArticlesHandler` |
-| Aktualizace | `UpdateArticleCommand`, `UpdateArticleHandler` |
-| Načtení podle ID | `GetArticleQuery`, `GetArticleHandler` |
-| Vyhledávání | `FindArticlesQuery`, `FindArticlesHandler` |
-
-Command DTO jsou zároveň vstupním kontraktem zápisových endpointů. ID aktualizovaného artiklu se předává
-handleru odděleně z URL. Queries pouze čtou, používají `AsNoTracking` a vracejí DTO. Commands validují
-vstup, mění stav přes repository a vracejí uloženou podobu artiklu.
-
-CQRS zde odděluje odpovědnosti nad jedním úložištěm; nevyžaduje oddělené databáze ani event sourcing.
-Endpointy injektují konkrétní handlery přímo, takže není potřeba mediator, reflexní dispatcher ani
-generická hierarchie request/response tříd. Model a jeho handler jsou společně v souboru dané operace.
-
-### Repository pattern a EF Core InMemory
-
-`IArticleRepository` definuje pouze operace, které artikly potřebují. Nevystavuje `IQueryable`,
-`DbSet` ani `DbContext` mimo infrastrukturu. `ArticleRepository` implementuje vyhledávání i zápisy;
-samostatný generický CRUD repository nebo Unit of Work obal by zde duplikoval EF Core.
-
-`IDbContextFactory<ArticlesDbContext>` vytváří krátkodobý context pro každou operaci. Všechny contexty
-jednoho aplikačního hostu sdílejí jeden `InMemoryDatabaseRoot`. Různé hosty mají oddělené databáze,
-což zároveň zajišťuje izolaci testů. Context se nesdílí mezi souběžnými operacemi.
-
-Požadované InMemory úložiště je záměrně jediné nakonfigurované úložiště. Volitelný SQL úkol z PDF je
-tím nahrazen. InMemory není relační databáze, nemá trvalost mezi spuštěními ani transakce pro dávku.
-Při případném doplnění SQL provideru je potřeba upravit registraci, migrace a ověřit překlad filtrů:
-aktuální `Contains(..., StringComparison.OrdinalIgnoreCase)` využívá možnosti InMemory provideru.
-
-### Mapster a sdílení pravidel
-
-Mapster zajišťuje oba směry mapování: vstupní command DTO na `Article` a `Article` na `ArticleDto`.
-Konfigurace je lokální pro aplikační host a kompiluje se při startu. Vstupní mapy dědí jednu konfiguraci
-`ArticleInput -> Article`; ID a verze se při mapování ignorují, protože je spravuje server.
-Update mapuje do načtené entity, včetně vymazání vynechaných volitelných polí.
-
-`ArticleInput` sdílí pole pro vytvoření a aktualizaci. `ArticleValidator` sdílí pravidla mezi vytvořením,
-dávkou a aktualizací. Maximální délky jsou definované jednou v doméně a využívá je i EF konfigurace.
-JSON nastavení používá stejnou funkci pro runtime a Swagger, aby dokumentace odpovídala skutečným názvům polí.
-
-## API kontrakt
-
-| Metoda a cesta | Chování | Odpovědi |
+| Operation | Model | Handler |
 | --- | --- | --- |
-| `POST /api/articles` | Vytvoří artikl a přidělí ID a verzi | `200`, `400` |
-| `GET /api/articles/{articleId}` | Načte artikl podle ID | `200`, `404` |
-| `GET /api/articles?name=...&category=...` | Vyhledá artikly | `200`, včetně `[]` |
-| `POST /api/articles-concurrent` | Souběžně uloží pole artiklů | `200`, `400` |
-| `PUT /api/articles/{articleId}` | Nahradí artikl s kontrolou verze | `200`, `400`, `404`, `409` |
+| Create one article | `CreateArticleCommand` | `CreateArticleHandler` |
+| Create a batch concurrently | `CreateArticlesCommand` | `CreateArticlesHandler` |
+| Update an article | `UpdateArticleCommand` | `UpdateArticleHandler` |
+| Read by ID | `GetArticleQuery` | `GetArticleHandler` |
+| Search | `FindArticlesQuery` | `FindArticlesHandler` |
 
-Vytvoření vrací `200 OK` podle PDF. Chyby používají standardní Problem Details;
-validační chyby navíc obsahují slovník `errors` podle názvů polí. Nepodporovaný Content-Type vrací `415`.
+Create and update commands also serve as the write request contracts. The update ID is supplied
+separately from the route. Queries read detached entities with `AsNoTracking` and return
+`ArticleResponse` objects. Commands validate their inputs, write through the repository, and return
+the stored representation.
 
-### Validace
+CQRS separates responsibilities over a single store; it does not require separate databases or event
+sourcing. The controller receives concrete handlers through constructor injection. No mediator,
+reflection-based dispatcher, or generic request/response hierarchy is needed.
 
-| Pole | Pravidlo |
+### Controller and HTTP boundary
+
+`ArticlesController` derives from `ControllerBase` and uses `[ApiController]` with attribute routing.
+Its five actions delegate to the application handlers and return `ActionResult<ArticleResponse>` or
+`ActionResult<ArticleResponse[]>`. The batch action keeps the assignment's `/api/articles-concurrent` route.
+
+MVC handles JSON deserialization and malformed-body errors. Shared application validation continues
+to enforce the article rules. `ApiExceptionHandler` translates application validation, missing-article,
+and concurrency failures into Problem Details responses. JSON settings belong to `AddControllers().AddJsonOptions`,
+which also supplies the naming configuration used by Swagger.
+
+### Repository pattern and EF Core InMemory
+
+`IArticleRepository` exposes only operations needed by article use cases. It does not expose
+`IQueryable`, `DbSet`, or `DbContext`. `ArticleRepository` implements both searches and writes; an additional
+generic CRUD repository or Unit of Work wrapper would duplicate the existing EF Core responsibilities.
+
+`IDbContextFactory<ArticlesDbContext>` creates a short-lived context for each operation. Contexts within
+one host share an `InMemoryDatabaseRoot`, while separate hosts have separate stores. Concurrent operations
+never share a context.
+
+InMemory is the configured storage provider, as requested, replacing the PDF's optional SQL storage task.
+It does not provide durability across runs or a transaction spanning a batch. A future SQL provider
+would require registration changes, migrations, and verification of query translation: the current
+`Contains(..., StringComparison.OrdinalIgnoreCase)` uses InMemory's query capabilities.
+
+### Mapster and shared rules
+
+Mapster maps input commands to `Article` and entities to `ArticleResponse`. Its configuration belongs
+to the host and is compiled at startup. Input maps inherit the common `ArticleInput -> Article` mapping,
+which ignores the server-managed ID and version. Updates map onto the loaded entity, including clearing
+omitted optional fields.
+
+`ArticleInput` shares the editable fields. `ArticleValidator` shares validation between single creates,
+batches, and updates. Field length limits are declared once in the domain and reused by validation and
+EF configuration. `ArticleResponse` is the output contract; entities are not returned directly over HTTP.
+
+## API contract
+
+| Method and route | Behavior | Responses |
+| --- | --- | --- |
+| `POST /api/articles` | Creates an article with a generated ID and version | `200`, `400` |
+| `GET /api/articles/{articleId}` | Retrieves an article by ID | `200`, `404` |
+| `GET /api/articles?name=...&category=...` | Searches for articles | `200`, including `[]` |
+| `POST /api/articles-concurrent` | Stores an array of articles concurrently | `200`, `400` |
+| `PUT /api/articles/{articleId}` | Replaces an article with a version check | `200`, `400`, `404`, `409` |
+
+Creation returns `200 OK` to match the assignment. Errors use Problem Details; validation errors include
+an `errors` dictionary. Unsupported request content types return `415`.
+
+### Validation
+
+| Field | Rule |
 | --- | --- |
-| `article_id` | Generované kladné celé číslo; nesmí být ve vstupním JSON, ani jako `null` |
-| `name` | Povinný neprázdný řetězec, nejvýše 64 znaků |
-| `description` | Povinný neprázdný řetězec, nejvýše 2048 znaků |
-| `category` | Volitelné, nejvýše 64 znaků |
-| `price` | Povinné JSON číslo `>= 0`, interně `decimal`; číselný řetězec se odmítá |
-| `currency` | ISO 4217 kód velkými písmeny; při kladné ceně povinný, při nule smí být prázdný |
-| `version` | Serverem generované UUID v odpovědi; při PUT povinná poslední načtená verze, při POST zakázané |
+| `article_id` | Positive server-generated integer; must not be present in the request, even as `null` |
+| `name` | Required, nonblank string of at most 64 characters |
+| `description` | Required, nonblank string of at most 2048 characters |
+| `category` | Optional string of at most 64 characters |
+| `price` | Required JSON number `>= 0`, stored as `decimal`; numeric strings are rejected |
+| `currency` | Uppercase ISO 4217 code; required for a positive price and may be blank when the price is zero |
+| `version` | Server-generated UUID; the last read version is required for PUT and forbidden for POST |
 
-Neznámá JSON pole se odmítají. Neuvedené volitelné hodnoty se v odpovědi vynechají. Prázdná měna
-bezplatného artiklu se normalizuje na `null`. Uvedená neprázdná měna se ověřuje i při nulové ceně.
-Číselník je snapshot [oficiálního ISO 4217 List One od SIX](https://www.six-group.com/dam/download/financial-information/data-center/iso-currrency/lists/list-one.xml)
-z 17. září 2026 a aktualizuje se v `CurrencyCodes.cs`; běh aplikace nevyžaduje síť ani lokální číselníky OS.
+Unknown JSON properties are rejected. Missing optional values are omitted from responses. A blank currency
+for a free article is normalized to `null`; a nonblank currency is validated even when the price is zero.
+The currency list is a snapshot of [SIX's official ISO 4217 List One](https://www.six-group.com/dam/download/financial-information/data-center/iso-currrency/lists/list-one.xml)
+published on September 17, 2026. Update `CurrencyCodes.cs` when refreshing it. Runtime validation does not
+rely on network access or platform-specific locale data.
 
-PDF má v příkladu PUT cenu uvedenou jako řetězec, ale jeho kontrakt a validační příklad vyžadují číslo.
-Implementace proto konzistentně požaduje JSON číslo i při aktualizaci.
+The PDF's PUT example shows a numeric string, but its contract and validation example require a number.
+The implementation consistently requires a JSON number for updates as well as creation.
 
-### Vyhledávání
+### Search
 
-- `name`: částečná shoda bez rozlišení velikosti písmen, s ordinal porovnáním.
-- `category`: úplná shoda s rozlišením velikosti písmen; PDF u kategorie nepožaduje case-insensitive hledání.
-- Oba filtry se kombinují pomocí AND. Bez filtrů se vrací všechny artikly seřazené podle ID.
-- Hodnoty se URL kódují, např. `?name=branded&category=USB%20flash%20drive`.
+- `name` matches a substring using ordinal, case-insensitive comparison.
+- `category` matches the whole value, case-sensitively; the assignment only requires case-insensitive name matching.
+- Supplied filters are combined with AND. Without filters, the API returns all articles ordered by ID.
+- URL-encode values, for example `?name=branded&category=USB%20flash%20drive`.
 
-### Souběžné vkládání
+### Concurrent insertion
 
-Dávkový command nejprve ověří všechny položky. Pokud některá nevyhovuje, neuloží se žádná a chyby
-obsahují index položky, např. `[1].currency`. Prázdná dávka vrací `[]`; `null` položka je neplatná.
+The batch handler validates all articles before starting any writes. An invalid batch is rejected without
+persisting any of its articles. Error keys include the item index, for example `[1].currency`. An empty
+batch returns `[]`; a null item is invalid.
 
-Po validaci repository použije `Parallel.ForEachAsync` s nejvýše čtyřmi zapisujícími operacemi,
-každou s vlastním contextem. ID generuje EF Core. Odpověď zachová pořadí vstupu, i když přidělená ID
-mohou být kvůli souběhu v jiném pořadí. Zrušení požadavku se propaguje přes cancellation token.
-Garance „žádné zápisy“ platí pro neplatný vstup; při chybě úložiště nebo zrušení již probíhající validní
-dávky mohou zůstat částečné zápisy, protože InMemory provider nemá dávkovou transakci.
+After validation, `Parallel.ForEachAsync` runs at most four writers, each with its own context. EF generates
+the IDs. Responses preserve input order even if IDs are assigned in a different order. Cancellation is
+propagated to outstanding operations. The no-writes guarantee applies to invalid input; storage failure or
+cancellation during a valid batch may leave partial writes because InMemory has no batch transaction.
 
-### Optimistická konkurence při aktualizaci
+### Optimistic concurrency
 
-1. Klient načte artikl a uchová jeho `version`.
-2. Při PUT pošle celé nové hodnoty a tuto verzi.
-3. Handler ověří vstup a porovná verzi s načteným stavem. Neexistující ID vrací `404`, stará verze `409`.
-4. Repository při ukládání nastaví očekávanou původní verzi v EF a vygeneruje novou.
-5. `Version` je EF concurrency token, takže kontrola proběhne také při zápisu. Chrání i závod mezi
-   načtením a uložením. `DbUpdateConcurrencyException` se převádí na aplikační konflikt a HTTP `409`.
+1. The client reads an article and keeps its `version`.
+2. A PUT request sends the complete replacement values and that version.
+3. The handler validates the input and checks the loaded version. A missing ID returns `404`; a stale version returns `409`.
+4. The repository sets EF's expected original version and generates a new version for the update.
+5. `Version` is an EF concurrency token, so it is checked again when saving. This also protects the race
+   between reading and writing. `DbUpdateConcurrencyException` becomes an application conflict and HTTP `409`.
 
-Po konfliktu musí klient znovu načíst aktuální data a rozhodnout, jak změny sloučit.
+After a conflict, the client must reload the article and decide how to reconcile its changes.
 
-### Příklad
+### Example
 
-`POST /api/articles` s `Content-Type: application/json`:
+Send `POST /api/articles` with `Content-Type: application/json`:
 
 ```json
 {
@@ -175,7 +199,7 @@ Po konfliktu musí klient znovu načíst aktuální data a rozhodnout, jak změn
 }
 ```
 
-Odpověď `200 OK` (ID a UUID jsou ilustrační):
+Example `200 OK` response (the ID and UUID are illustrative):
 
 ```json
 {
@@ -189,50 +213,78 @@ Odpověď `200 OK` (ID a UUID jsou ilustrační):
 }
 ```
 
-Pro `PUT /api/articles/1` pošlete vstupní pole s novými hodnotami a `version` z poslední odpovědi;
-`article_id` zůstává pouze v URL. Úspěšná odpověď obsahuje novou verzi. Dávkový endpoint přijímá pole
-stejných objektů jako POST a vrací pole uložených artiklů.
+For `PUT /api/articles/1`, send the editable fields and the `version` from the last response; leave
+`article_id` in the URL only. Successful updates return a new version. The batch endpoint accepts an
+array of create request objects and returns an array of `ArticleResponse` objects.
 
-## Testování
+## XML documentation and Swagger
+
+Public types and members, including methods in the test projects, have XML documentation. Method comments
+describe behavior, parameters, return values, and relevant failures. Repository implementations reuse
+the interface documentation through `<inheritdoc />`.
+
+`GenerateDocumentationFile` is enabled solution-wide. The existing warnings-as-errors setting makes
+missing public XML documentation (`CS1591`) fail the build. Generated XML files are placed beside the
+assemblies. Swagger loads the API and application XML files to document controller actions and DTO properties.
+Controller summaries, remarks, parameters, and response descriptions therefore come from the same comments
+used by IDE tooling. The OpenAPI response schema is named `ArticleResponse`.
+
+## Logging with Serilog
+
+`Serilog.AspNetCore` handles application and ASP.NET Core logs. Services can use the standard injected
+`ILogger<T>`. Configuration is read from the `Serilog` section of `src/PapirFly.Api/appsettings.json`:
+
+- JSON events are written to the console with an `Application: PapirFly.Api` property.
+- The default minimum level is `Information`; ASP.NET Core and EF Core sources are limited to `Warning`.
+- `UseSerilogRequestLogging` records the HTTP method, request path, final response status, and elapsed time.
+- The logger is owned by its application host and disposed with it. Request logging explicitly uses the
+  same DI logger, so parallel test hosts do not interfere through a global static logger.
+- `ReadFrom.Services` supports registered Serilog sinks, including the capturing sink used in integration tests.
+
+The request logger wraps exception handling so it records the final status for handled failures.
+Log levels can be overridden through configuration, for example `Serilog__MinimumLevel__Default=Debug`.
+
+## Testing
 
 ```sh
-# Všechny testy
+# All tests
 dotnet test PapirFly.sln --configuration Release
 
-# Pouze integrační testy
+# Integration tests only
 dotnet test tests/PapirFly.IntegrationTests --configuration Release
 ```
 
-Alba spouští skutečnou ASP.NET Core pipeline přes TestServer v paměti. Testy používají reálnou konfiguraci
-DI, validaci, Mapster i EF Core repository, bez mockování databáze nebo handlerů. JSON scénáře ověřují
-skutečný HTTP kontrakt, včetně názvu `article_id`, typů hodnot a statusů.
+Alba runs the real ASP.NET Core controller pipeline through an in-memory TestServer. Tests use the actual
+DI configuration, validation, Mapster, and EF repository. Raw JSON scenarios verify field names, numeric
+values, error statuses, and persisted results without mocking handlers or storage.
 
-Host se sdílí v rámci testovací třídy; úložiště se před každým článkovým testem vyčistí. Třídy mají
-samostatné hosty, takže se navzájem neovlivňují. Pokrytí zahrnuje všechny endpointy, neplatné JSON a
-validační hranice, filtry a URL kódování, validaci celé dávky před zápisem, souběžná vytváření,
-konflikty aktualizací, izolaci hostů, Swagger JSON i UI. Samostatný test dvou odpojených EF snapshotů
-ověřuje kontrolu concurrency tokenu při uložení, nezávisle na předběžné kontrole v handleru.
-
-Unit testy samostatně ověřují validační pravidla a mezní hodnoty.
+A host is shared within each fixture-backed test class, and the article store is cleared before each
+article test. Separate hosts have isolated stores. Coverage includes all five article operations,
+invalid JSON, validation boundaries, search and URL encoding, batch validation before writes, concurrent
+creates, update conflicts, host isolation, OpenAPI descriptions, Swagger UI, and structured Serilog events.
+A separate detached-snapshot scenario checks EF concurrency enforcement independently of the handler's
+preliminary version comparison. Unit tests cover validation rules and boundary values.
 
 ## GitHub Actions
 
-Workflow [`.github/workflows/build.yml`](.github/workflows/build.yml) se spouští při pushi,
-pull requestu a ručně. Na Ubuntu provede:
+[`.github/workflows/build.yml`](.github/workflows/build.yml) runs on pushes, pull requests, and manual dispatch.
+On Ubuntu it:
 
-1. Instalaci .NET 10 SDK a obnovení NuGet cache.
-2. `dotnet restore --locked-mode` nad verzovanými `packages.lock.json`.
-3. Release build celého řešení; varování kompilátoru se považují za chyby.
-4. Unit testy a poté všechny integrační testy Alba. Selhání testu způsobí selhání buildu.
-5. Nahrání dostupných TRX výsledků jako artefakt `test-results` i při selhání testů, s uchováním 14 dní.
+1. Installs .NET 10 and restores the NuGet cache.
+2. Runs `dotnet restore --locked-mode` against the committed `packages.lock.json` files.
+3. Builds the solution in Release mode with compiler warnings treated as errors, including missing XML documentation.
+4. Runs unit tests and then the full Alba integration suite. A test failure fails the build job.
+5. Uploads available TRX results as the `test-results` artifact, including on test failure, with 14-day retention.
 
-Verze závislostí jsou společné v `Directory.Packages.props`. Po změně verzí spusťte běžné
-`dotnet restore` a zahrňte aktualizované lock soubory do stejné změny. Workflow nepotřebuje databázovou
-službu ani vlastní secrets a používá pouze oprávnění `contents: read`.
+Package versions are centralized in `Directory.Packages.props`. After changing dependencies, run
+`dotnet restore` and include the updated lock files with the change. CI needs no database service or
+custom secrets and requests only `contents: read` permission.
 
-## Odkazy
+## References
 
-- [Alba: integrační HTTP scénáře](https://jasperfx.github.io/alba/guide/gettingstarted.html)
-- [Mapster: konfigurace mapování](https://github.com/MapsterMapper/Mapster/wiki/Configuration)
-- [EF Core: optimistická konkurence](https://learn.microsoft.com/en-us/ef/core/saving/concurrency)
-- [GitHub Actions: build a testování .NET](https://docs.github.com/en/actions/tutorials/build-and-test-code/net)
+- [Alba: HTTP integration scenarios](https://jasperfx.github.io/alba/guide/gettingstarted.html)
+- [Mapster: mapping configuration](https://github.com/MapsterMapper/Mapster/wiki/Configuration)
+- [EF Core: optimistic concurrency](https://learn.microsoft.com/en-us/ef/core/saving/concurrency)
+- [ASP.NET Core: controller-based web APIs](https://learn.microsoft.com/en-us/aspnet/core/web-api/?view=aspnetcore-10.0)
+- [Serilog: ASP.NET Core integration](https://github.com/serilog/serilog-aspnetcore)
+- [GitHub Actions: building and testing .NET](https://docs.github.com/en/actions/tutorials/build-and-test-code/net)

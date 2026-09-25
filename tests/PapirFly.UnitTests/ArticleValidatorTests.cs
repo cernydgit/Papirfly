@@ -1,11 +1,14 @@
 using PapirFly.Application.Articles;
+using PapirFly.Application.Articles.Commands;
 
 namespace PapirFly.UnitTests;
 
+/// <summary>Verifies article validation independently of HTTP and persistence.</summary>
 public sealed class ArticleValidatorTests
 {
     private static CreateArticleCommand Valid => new() { Name = "Mug", Description = "Porcelain mug", Price = 0 };
 
+    /// <summary>Accepts exact string limits and an article priced at zero without a currency.</summary>
     [Fact]
     public void Accepts_exact_length_limits_and_a_free_article_without_currency()
     {
@@ -13,6 +16,7 @@ public sealed class ArticleValidatorTests
         Assert.Empty(ArticleValidator.Validate(input));
     }
 
+    /// <summary>Reports every string length violation in a single validation result.</summary>
     [Fact]
     public void Reports_all_length_errors_together()
     {
@@ -21,6 +25,8 @@ public sealed class ArticleValidatorTests
         Assert.Equal(new[] { "category", "description", "name" }, errors.Keys.Order());
     }
 
+    /// <summary>Rejects missing, empty and whitespace-only required text.</summary>
+    /// <param name="text">The invalid name and description value.</param>
     [Theory]
     [InlineData(null)]
     [InlineData("")]
@@ -32,6 +38,9 @@ public sealed class ArticleValidatorTests
         Assert.Contains("description", errors.Keys);
     }
 
+    /// <summary>Distinguishes a missing or negative price from a valid numeric price.</summary>
+    /// <param name="price">The price to validate.</param>
+    /// <param name="invalid">Whether a price validation error is expected.</param>
     [Theory]
     [InlineData(null, true)]
     [InlineData(-1, true)]
@@ -42,6 +51,10 @@ public sealed class ArticleValidatorTests
         Assert.Equal(invalid, ArticleValidator.Validate(Valid with { Price = price, Currency = "CZK" }).ContainsKey("price"));
     }
 
+    /// <summary>Checks conditional currency requirements and ISO 4217 membership.</summary>
+    /// <param name="price">The article price.</param>
+    /// <param name="currency">The currency value to validate.</param>
+    /// <param name="valid">Whether the currency is expected to pass validation.</param>
     [Theory]
     [InlineData(0, null, true)]
     [InlineData(0, "", true)]
@@ -61,6 +74,7 @@ public sealed class ArticleValidatorTests
         Assert.Equal(valid, !ArticleValidator.Validate(Valid with { Price = price, Currency = currency }).ContainsKey("currency"));
     }
 
+    /// <summary>Requires a nonempty concurrency token for every update.</summary>
     [Fact]
     public void Update_requires_a_nonempty_version()
     {

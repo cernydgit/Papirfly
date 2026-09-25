@@ -5,8 +5,15 @@ using PapirFly.Application.Articles;
 
 namespace PapirFly.Api;
 
+/// <summary>Converts expected application failures into HTTP Problem Details responses.</summary>
+/// <param name="problemDetailsService">Writes the configured Problem Details response.</param>
 public sealed class ApiExceptionHandler(IProblemDetailsService problemDetailsService) : IExceptionHandler
 {
+    /// <summary>Handles validation, missing article, concurrency and HTTP request failures.</summary>
+    /// <param name="context">The request whose response is being written.</param>
+    /// <param name="exception">The failure to translate.</param>
+    /// <param name="cancellationToken">Signals request cancellation.</param>
+    /// <returns>True when the failure was handled; otherwise false so the default handler can process it.</returns>
     public async ValueTask<bool> TryHandleAsync(HttpContext context, Exception exception, CancellationToken cancellationToken)
     {
         ProblemDetails? problem = exception switch
