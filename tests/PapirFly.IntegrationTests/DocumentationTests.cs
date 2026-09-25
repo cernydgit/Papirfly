@@ -28,11 +28,16 @@ public sealed class DocumentationTests(ApiFixture api) : IClassFixture<ApiFixtur
         }
 
         var schemas = document.GetProperty("components").GetProperty("schemas");
+        var filters = paths.GetProperty("/api/articles").GetProperty("get").GetProperty("parameters")
+            .EnumerateArray().Select(parameter => parameter.GetProperty("name").GetString()).Order().ToArray();
+        Assert.Equal(new[] { "category", "name" }, filters);
         Assert.True(schemas.GetProperty("ArticleResponse").GetProperty("properties").TryGetProperty("article_id", out _));
-        Assert.False(schemas.GetProperty("CreateArticleCommand").GetProperty("properties").TryGetProperty("article_id", out _));
+        Assert.False(schemas.GetProperty("CreateArticleRequest").GetProperty("properties").TryGetProperty("article_id", out _));
+        Assert.DoesNotContain(schemas.EnumerateObject(), schema => schema.Name.EndsWith("Command") || schema.Name.EndsWith("Query"));
+        Assert.False(schemas.TryGetProperty("Article", out _));
         Assert.True(schemas.GetProperty("UpdateArticleRequest").GetProperty("properties").TryGetProperty("version", out _));
         Assert.False(schemas.GetProperty("UpdateArticleRequest").GetProperty("properties").TryGetProperty("article_id", out _));
-        var name = schemas.GetProperty("CreateArticleCommand").GetProperty("properties").GetProperty("name");
+        var name = schemas.GetProperty("CreateArticleRequest").GetProperty("properties").GetProperty("name");
         Assert.Contains("64 characters", name.GetProperty("description").GetString());
         var version = schemas.GetProperty("UpdateArticleRequest").GetProperty("properties").GetProperty("version");
         Assert.Contains("concurrency token", version.GetProperty("description").GetString());

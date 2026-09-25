@@ -20,5 +20,12 @@ public sealed class ArticlesDbContext(DbContextOptions<ArticlesDbContext> option
         article.Property(x => x.Category).HasMaxLength(Article.CategoryMaxLength);
         article.Property(x => x.Currency).HasMaxLength(3);
         article.Property(x => x.Version).IsConcurrencyToken();
+        article.HasIndex(x => x.Category);
+
+        if (Database.IsNpgsql())
+        {
+            modelBuilder.HasPostgresExtension("pg_trgm");
+            article.HasIndex(x => x.Name).HasMethod("gin").HasOperators("gin_trgm_ops");
+        }
     }
 }

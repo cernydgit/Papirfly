@@ -1,17 +1,19 @@
+using MapsterMapper;
 using MediatR;
 using Microsoft.AspNetCore.Mvc;
+using PapirFly.Api.DTOs;
 using PapirFly.Application.Articles.Commands;
 using PapirFly.Application.Articles.Queries;
-using PapirFly.Application.DTOs;
 
 namespace PapirFly.Api.Controllers;
 
 /// <summary>Registers, retrieves and updates shop articles.</summary>
 /// <param name="sender">Dispatches commands and queries to their application handlers through MediatR.</param>
+/// <param name="mapper">Maps HTTP contracts to application requests and domain results to response DTOs.</param>
 [ApiController]
 [Route("api/articles")]
 [Produces("application/json")]
-public sealed class ArticlesController(ISender sender) : ControllerBase
+public sealed class ArticlesController(ISender sender, IMapper mapper) : ControllerBase
 {
     /// <summary>Registers an article.</summary>
     /// <remarks>
@@ -20,7 +22,7 @@ public sealed class ArticlesController(ISender sender) : ControllerBase
     /// for a positive price. Do not send article_id or version; the server generates both.
     /// Returns 200 as specified in the assignment.
     /// </remarks>
-    /// <param name="command">The article fields to validate and store.</param>
+    /// <param name="request">The article fields to validate and store.</param>
     /// <param name="cancellationToken">Cancels the request.</param>
     /// <returns>The stored article with its generated identifier and version.</returns>
     /// <response code="200">The article was stored.</response>
@@ -29,8 +31,11 @@ public sealed class ArticlesController(ISender sender) : ControllerBase
     [ProducesResponseType<ArticleResponse>(StatusCodes.Status200OK)]
     [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
     public async Task<ActionResult<ArticleResponse>> Create(
-        [FromBody] CreateArticleCommand command, CancellationToken cancellationToken) =>
-        Ok(await sender.Send(command, cancellationToken));
+        [FromBody] CreateArticleRequest request, CancellationToken cancellationToken)
+    {
+        var command = mapper.Map<CreateArticleCommand>(request);
+        return Ok(mapper.Map<ArticleResponse>(await sender.Send(command, cancellationToken)));
+    }
 
     /// <summary>Registers an array of articles concurrently.</summary>
     /// <remarks>
@@ -47,8 +52,11 @@ public sealed class ArticlesController(ISender sender) : ControllerBase
     [ProducesResponseType<ArticleResponse[]>(StatusCodes.Status200OK)]
     [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
     public async Task<ActionResult<ArticleResponse[]>> CreateConcurrently(
-        [FromBody] CreateArticleCommand?[] articles, CancellationToken cancellationToken) =>
-        Ok(await sender.Send(new CreateArticlesCommand(articles), cancellationToken));
+        [FromBody] CreateArticleRequest?[] articles, CancellationToken cancellationToken)
+    {
+        var command = new CreateArticlesCommand(mapper.Map<CreateArticleCommand?[]>(articles));
+        return Ok(mapper.Map<ArticleResponse[]>(await sender.Send(command, cancellationToken)));
+    }
 
     /// <summary>Gets an article by its generated identifier.</summary>
     /// <remarks>Returns 404 if the identifier does not exist. Keep the returned version for the next update.</remarks>
@@ -61,23 +69,25 @@ public sealed class ArticlesController(ISender sender) : ControllerBase
     [ProducesResponseType<ArticleResponse>(StatusCodes.Status200OK)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
     public async Task<ActionResult<ArticleResponse>> Get(int articleId, CancellationToken cancellationToken) =>
-        Ok(await sender.Send(new GetArticleQuery(articleId), cancellationToken));
+        Ok(mapper.Map<ArticleResponse>(await sender.Send(new GetArticleQuery(articleId), cancellationToken)));
 
     /// <summary>Finds articles by name and category.</summary>
     /// <remarks>
     /// Both filters are optional and combined with AND. URL-encode query values. Without filters, returns all
     /// articles ordered by article_id. Returns an empty array when nothing matches.
     /// </remarks>
-    /// <param name="name">An optional case-insensitive name substring.</param>
-    /// <param name="category">An optional exact, case-sensitive category.</param>
+    /// <param name="request">The optional name substring and exact category filters.</param>
     /// <param name="cancellationToken">Cancels the search.</param>
     /// <returns>Matching articles ordered by identifier.</returns>
     /// <response code="200">The matching articles, possibly an empty array.</response>
     [HttpGet(Name = "FindArticles")]
     [ProducesResponseType<ArticleResponse[]>(StatusCodes.Status200OK)]
     public async Task<ActionResult<ArticleResponse[]>> Find(
-        [FromQuery] string? name, [FromQuery] string? category, CancellationToken cancellationToken) =>
-        Ok(await sender.Send(new FindArticlesQuery(name, category), cancellationToken));
+        [FromQuery] FindArticlesRequest request, CancellationToken cancellationToken)
+    {
+        var query = mapper.Map<FindArticlesQuery>(request);
+        return Ok(mapper.Map<ArticleResponse[]>(await sender.Send(query, cancellationToken)));
+    }
 
     /// <summary>Replaces an article using optimistic concurrency.</summary>
     /// <remarks>
@@ -99,6 +109,9 @@ public sealed class ArticlesController(ISender sender) : ControllerBase
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
     public async Task<ActionResult<ArticleResponse>> Update(
-        int articleId, [FromBody] UpdateArticleRequest request, CancellationToken cancellationToken) =>
-        Ok(await sender.Send(new UpdateArticleCommand(articleId, request), cancellationToken));
+        int articleId, [FromBody] UpdateArticleRequest request, CancellationToken cancellationToken)
+    {
+        var command = mapper.Map<UpdateArticleCommand>(request) with { ArticleId = articleId };
+        return Ok(mapper.Map<ArticleResponse>(await sender.Send(command, cancellationToken)));
+    }
 }

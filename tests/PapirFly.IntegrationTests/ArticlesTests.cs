@@ -5,6 +5,8 @@ using Microsoft.Extensions.DependencyInjection;
 using PapirFly.Application.Articles;
 using PapirFly.Application.Interfaces;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using PapirFly.Infrastructure.Configuration;
 using PapirFly.Infrastructure.Persistence;
 
@@ -389,7 +391,7 @@ public sealed class ArticlesTests(ApiFixture api) : IClassFixture<ApiFixture>, I
         Assert.Single((await api.Send("GET", ArticlesUrl)).Json.EnumerateArray());
     }
 
-    /// <summary>Checks the actual EF provider and that PostgreSQL migrations have been applied.</summary>
+    /// <summary>Checks the actual EF provider, applied migrations and physical PostgreSQL search indexes.</summary>
     /// <returns>A task that completes after the provider and schema assertions.</returns>
     [Fact]
     public async Task Configured_provider_is_used_and_relational_schema_is_current()
@@ -402,16 +404,33 @@ public sealed class ArticlesTests(ApiFixture api) : IClassFixture<ApiFixture>, I
             Assert.NotEmpty(await context.Database.GetAppliedMigrationsAsync());
             Assert.Empty(await context.Database.GetPendingMigrationsAsync());
             Assert.False(context.Database.HasPendingModelChanges());
+            var indexes = await context.Database.SqlQueryRaw<string>("""
+                SELECT indexdef AS "Value" FROM pg_indexes
+                WHERE schemaname = 'public' AND tablename = 'Articles'
+                """).ToListAsync();
+            Assert.Contains(indexes, definition => definition.Contains("IX_Articles_Category") && definition.Contains("USING btree (\"Category\")"));
+            Assert.Contains(indexes, definition => definition.Contains("IX_Articles_Name") && definition.Contains("USING gin (\"Name\" gin_trgm_ops)"));
+            var extensions = await context.Database.SqlQueryRaw<string>("SELECT extname AS \"Value\" FROM pg_extension").ToListAsync();
+            Assert.Contains("pg_trgm", extensions);
         }
         else
             Assert.True(context.Database.IsInMemory());
     }
 
-    /// <summary>Checks that PostgreSQL retains articles across host restarts while InMemory does not.</summary>
+    /// <summary>Checks that an existing SQL database retains articles while startup applies the index migration; InMemory resets.</summary>
     /// <returns>A task that completes after the restart and read-back assertions.</returns>
     [Fact]
     public async Task Storage_lifetime_matches_the_selected_provider()
     {
+        if (api.Provider == StorageProvider.PostgreSql)
+        {
+            // Recreate the pre-index schema in this fixture's disposable database before seeding it.
+            var factory = api.Host.Services.GetRequiredService<IDbContextFactory<ArticlesDbContext>>();
+            await using var context = await factory.CreateDbContextAsync();
+            await context.GetService<IMigrator>().MigrateAsync("20260925070713_InitialArticles");
+            Assert.Single(await context.Database.GetAppliedMigrationsAsync());
+        }
+
         var created = await Create();
         await api.RestartAsync();
         var articles = (await api.Send("GET", ArticlesUrl)).Json.EnumerateArray().ToArray();

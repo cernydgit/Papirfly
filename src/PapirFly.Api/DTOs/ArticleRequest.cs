@@ -1,4 +1,4 @@
-namespace PapirFly.Application.DTOs;
+namespace PapirFly.Api.DTOs;
 
 /// <summary>Contains the editable fields shared by article creation and update requests.</summary>
 public abstract record ArticleRequest

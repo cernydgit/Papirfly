@@ -732,6 +732,7 @@
       "papirfly.api": {
         "type": "Project",
         "dependencies": {
+          "Mapster": "[10.0.13, )",
           "PapirFly.Application": "[1.0.0, )",
           "PapirFly.Infrastructure": "[1.0.0, )",
           "Serilog.AspNetCore": "[10.0.0, )",

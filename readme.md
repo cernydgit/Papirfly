@@ -88,14 +88,15 @@ to an already running remote PostgreSQL server by changing the connection string
 src/
   PapirFly.Domain/            Article entity, field limits, ISO currency codes
   PapirFly.Application/
-    Articles/                Use case handlers, shared validation and exceptions
+    Articles/                Use case handlers, ArticleValues, shared validation and exceptions
       Commands/              One command per file
       Queries/               One query per file
-    DTOs/                    ArticleRequest, UpdateArticleRequest and ArticleResponse
     Interfaces/              IArticleRepository
   PapirFly.Infrastructure/    Storage options, EF Core context, repository and PostgreSQL migrations
   PapirFly.Api/               JSON, Problem Details, Serilog, Swagger and DI configuration
     Controllers/             ArticlesController and its HTTP actions
+    DTOs/                    ArticleRequest, CreateArticleRequest, UpdateArticleRequest,
+                             FindArticlesRequest and ArticleResponse
 tests/
   PapirFly.UnitTests/         Validation rules and boundary cases
   PapirFly.IntegrationTests/  Full HTTP pipeline, persistence, OpenAPI and logging
@@ -121,7 +122,9 @@ Its infrastructure reference is used for registration; the controller does not a
 The domain has one simple entity. Additional aggregate hierarchies, domain events, and service layers
 are unnecessary for its current behavior.
 
-DTOs live in `PapirFly.Application.DTOs`; persistence interfaces live in `PapirFly.Application.Interfaces`.
+HTTP DTOs live in `PapirFly.Api.DTOs`; persistence interfaces live in `PapirFly.Application.Interfaces`.
+The application layer has no references to API DTOs. Commands share an application-owned `ArticleValues`
+base containing editable values, while HTTP requests share the separate API-owned `ArticleRequest` base.
 Command and query models have separate `PapirFly.Application.Articles.Commands` and
 `PapirFly.Application.Articles.Queries` namespaces. Each command and query has its own file named after
 the type. Handlers remain in `PapirFly.Application.Articles`.
@@ -138,19 +141,22 @@ Reads and writes have separate models and handlers:
 | Read by ID | `GetArticleQuery` | `GetArticleHandler` |
 | Search | `FindArticlesQuery` | `FindArticlesHandler` |
 
-`CreateArticleCommand` also serves as the single-create request contract and the batch item contract.
-PUT binds an `UpdateArticleRequest` DTO, then combines it with the route ID in `UpdateArticleCommand`.
-The ID therefore travels with the command to its handler without becoming a writable JSON body property.
-Queries read detached entities with `AsNoTracking` and return
-`ArticleResponse` objects. Commands validate their inputs, write through the repository, and return
-the stored representation.
+The controller maps `CreateArticleRequest` to `CreateArticleCommand`, maps batch items before creating
+`CreateArticlesCommand`, and maps `FindArticlesRequest` to `FindArticlesQuery`. PUT maps `UpdateArticleRequest`
+to `UpdateArticleCommand` and explicitly sets its identifier from the URL. GET by ID constructs a query
+from its route value. Commands and queries are never bound directly to HTTP input.
+
+Handlers return domain `Article` values or collections within the application boundary. Queries read
+detached entities with `AsNoTracking`; commands validate their inputs and write through the repository.
+The controller maps every result to API-owned `ArticleResponse` DTOs before serialization, so neither
+domain entities nor MediatR contracts form the public JSON contract.
 
 CQRS separates read and write responsibilities over a single store; it does not require separate databases
 or event sourcing. MediatR dispatches both kinds of request to their respective handlers.
 
 ### Mediator pattern with MediatR
 
-`ArticlesController` depends on MediatR's `ISender`. Each action calls `Send` with a command or query and
+`ArticlesController` depends on MediatR's `ISender` and Mapster's `IMapper`. Each action calls `Send` with a command or query and
 the HTTP cancellation token. All five commands and queries implement `IRequest<TResponse>`, and their
 handlers implement the corresponding `IRequestHandler<TRequest, TResponse>`. MediatR resolves and calls
 the matching handler through DI; the controller does not depend on concrete handler classes.
@@ -203,14 +209,29 @@ Name search uses ordinal case-insensitive `Contains` with InMemory and server-si
 PostgreSQL patterns escape `%`, `_`, and backslash so those characters remain literal user input.
 PostgreSQL case folding follows the database locale. Category matching remains an exact, case-sensitive match.
 
+The additive `AddArticleSearchIndexes` migration enables `pg_trgm` and creates two non-unique indexes:
+
+- `IX_Articles_Category`: B-tree index for exact category filtering.
+- `IX_Articles_Name`: GIN index with `gin_trgm_ops` for substring searches using `ILIKE`.
+
+The original migration is preserved, so existing databases receive the indexes without losing article data.
+The PostgreSQL account applying migrations needs permission to enable the `pg_trgm` extension, which must
+be available on the server (it is included in the documented Docker image). Index creation runs during
+startup migration and may block writes while the indexes are built. InMemory does not create SQL indexes
+or require PostgreSQL extensions. The database planner chooses whether an index is worthwhile for each
+query; very short search strings and small tables may still use scans. See [PostgreSQL's trigram index documentation](https://www.postgresql.org/docs/17/pgtrgm.html).
+
 ### Mapster and shared rules
 
-Mapster maps `CreateArticleCommand` and `UpdateArticleRequest` to `Article`, and entities to `ArticleResponse`. Its configuration belongs
-to the host and is compiled at startup. Input maps inherit the common `ArticleRequest -> Article` mapping,
-which ignores the server-managed ID and version. Updates map onto the loaded entity, including clearing
-omitted optional fields.
+`ArticleMappings` in the API defines request DTO to command/query mappings and `Article` to `ArticleResponse`.
+The composition root passes these registrations to `AddApplication`, which adds command to entity mappings
+and compiles one host-owned Mapster configuration. Application code never references API types.
+Command maps inherit the common `ArticleValues -> Article` mapping, which ignores the server-managed ID
+and version. Updates map onto the loaded entity, including clearing omitted optional fields. The API mapping
+also ignores the update command's identifier, which the controller sets explicitly from the route.
 
-`ArticleRequest` shares the editable fields. `ArticleValidator` shares validation between single creates,
+`ArticleRequest` shares HTTP fields, while `ArticleValues` shares command values. Their separate definitions
+allow HTTP contracts and application use cases to evolve independently. `ArticleValidator` shares validation between single creates,
 batches, and updates. Field length limits are declared once in the domain and reused by validation and
 EF configuration. `ArticleResponse` is the output contract; entities are not returned directly over HTTP.
 
@@ -318,9 +339,10 @@ the interface documentation through `<inheritdoc />`.
 
 `GenerateDocumentationFile` is enabled solution-wide. The existing warnings-as-errors setting makes
 missing public XML documentation (`CS1591`) fail the build. Generated XML files are placed beside the
-assemblies. Swagger loads the API and application XML files to document controller actions and DTO properties.
+assemblies. Swagger loads the API XML file to document controller actions and API-owned DTO properties.
 Controller summaries, remarks, parameters, and response descriptions therefore come from the same comments
-used by IDE tooling. The OpenAPI response schema is named `ArticleResponse`.
+used by IDE tooling. The OpenAPI response schema is named `ArticleResponse`; input schemas use request DTO
+names and expose no commands, queries or domain entity schema.
 
 ## Logging with Serilog
 
@@ -388,7 +410,8 @@ scenario retains the SQL container to verify that articles survive restarting th
 
 Coverage includes all five article operations, invalid JSON, validation boundaries, search and literal SQL
 metacharacters, batch validation before writes, concurrent creates, update conflicts, store isolation,
-the actual selected EF provider, migrations, PostgreSQL durability, OpenAPI descriptions, Swagger UI and
+the actual selected EF provider, migrations, physical PostgreSQL indexes and the `pg_trgm` extension,
+data preservation when upgrading the original SQL schema, PostgreSQL durability, OpenAPI descriptions, Swagger UI and
 structured Serilog events. Detached-snapshot tests exercise concurrency enforcement at save time.
 Configuration tests verify all environment defaults, SQL registration and invalid configuration rejection.
 Unit tests cover validation rules and boundary values.

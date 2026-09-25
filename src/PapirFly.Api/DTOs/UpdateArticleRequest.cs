@@ -1,4 +1,4 @@
-namespace PapirFly.Application.DTOs;
+namespace PapirFly.Api.DTOs;
 
 /// <summary>Contains replacement article values; the identifier is supplied separately by the route.</summary>
 public sealed record UpdateArticleRequest : ArticleRequest

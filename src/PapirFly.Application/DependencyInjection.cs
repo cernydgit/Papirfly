@@ -3,7 +3,6 @@ using MapsterMapper;
 using Microsoft.Extensions.DependencyInjection;
 using PapirFly.Application.Articles;
 using PapirFly.Application.Articles.Commands;
-using PapirFly.Application.DTOs;
 using PapirFly.Domain.Articles;
 
 namespace PapirFly.Application;
@@ -13,18 +12,19 @@ public static class DependencyInjection
 {
     /// <summary>Registers MediatR with the application handlers and a compiled, host-specific Mapster configuration.</summary>
     /// <param name="services">The service collection to extend.</param>
+    /// <param name="configureMappings">Optional mappings supplied by the composition root for its boundary contracts.</param>
     /// <returns>The same collection for chained registrations.</returns>
-    public static IServiceCollection AddApplication(this IServiceCollection services)
+    public static IServiceCollection AddApplication(this IServiceCollection services, Action<TypeAdapterConfig>? configureMappings = null)
     {
         var mapping = new TypeAdapterConfig();
-        mapping.NewConfig<ArticleRequest, Article>()
+        mapping.NewConfig<ArticleValues, Article>()
             .Ignore(destination => destination.ArticleId)
             .Ignore(destination => destination.Version)
             .Map(destination => destination.Currency,
                 source => string.IsNullOrWhiteSpace(source.Currency) ? null : source.Currency);
-        mapping.NewConfig<CreateArticleCommand, Article>().Inherits<ArticleRequest, Article>();
-        mapping.NewConfig<UpdateArticleRequest, Article>().Inherits<ArticleRequest, Article>();
-        mapping.NewConfig<Article, ArticleResponse>();
+        mapping.NewConfig<CreateArticleCommand, Article>().Inherits<ArticleValues, Article>();
+        mapping.NewConfig<UpdateArticleCommand, Article>().Inherits<ArticleValues, Article>();
+        configureMappings?.Invoke(mapping);
         mapping.Compile();
 
         services.AddSingleton(mapping);

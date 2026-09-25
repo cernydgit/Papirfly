@@ -1,4 +1,4 @@
-using PapirFly.Application.DTOs;
+using PapirFly.Application.Articles.Commands;
 using PapirFly.Domain.Articles;
 
 namespace PapirFly.Application.Articles;
@@ -9,7 +9,7 @@ public static class ArticleValidator
     /// <summary>Collects all article validation errors without changing the input.</summary>
     /// <param name="article">The input to validate; null is reported as a missing article.</param>
     /// <returns>Errors keyed by contract field name, or an empty dictionary when valid.</returns>
-    public static Dictionary<string, string[]> Validate(ArticleRequest? article)
+    public static Dictionary<string, string[]> Validate(ArticleValues? article)
     {
         var errors = new Dictionary<string, string[]>();
         if (article is null)
@@ -33,7 +33,7 @@ public static class ArticleValidator
         else if (!CurrencyCodes.Contains(article.Currency))
             errors["currency"] = ["Currency must be an uppercase ISO 4217 code."];
 
-        if (article is UpdateArticleRequest update && (update.Version is null || update.Version == Guid.Empty))
+        if (article is UpdateArticleCommand update && (update.Version is null || update.Version == Guid.Empty))
             errors["version"] = ["The version returned when the article was read is required."];
 
         return errors;
@@ -50,7 +50,7 @@ public static class ArticleValidator
     /// <summary>Rejects an input if any shared article validation rule fails.</summary>
     /// <param name="article">The article to validate.</param>
     /// <exception cref="ArticleValidationException">The input contains one or more validation errors.</exception>
-    public static void EnsureValid(ArticleRequest? article)
+    public static void EnsureValid(ArticleValues? article)
     {
         var errors = Validate(article);
         if (errors.Count > 0)

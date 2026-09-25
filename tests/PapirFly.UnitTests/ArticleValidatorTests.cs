@@ -1,6 +1,5 @@
 using PapirFly.Application.Articles;
 using PapirFly.Application.Articles.Commands;
-using PapirFly.Application.DTOs;
 
 namespace PapirFly.UnitTests;
 
@@ -79,7 +78,7 @@ public sealed class ArticleValidatorTests
     [Fact]
     public void Update_requires_a_nonempty_version()
     {
-        var input = new UpdateArticleRequest { Name = "Mug", Description = "Mug", Price = 0 };
+        var input = new UpdateArticleCommand { Name = "Mug", Description = "Mug", Price = 0 };
         Assert.Contains("version", ArticleValidator.Validate(input).Keys);
         Assert.Contains("version", ArticleValidator.Validate(input with { Version = Guid.Empty }).Keys);
         Assert.Empty(ArticleValidator.Validate(input with { Version = Guid.NewGuid() }));

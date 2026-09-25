@@ -1,6 +1,6 @@
-namespace PapirFly.Application.DTOs;
+namespace PapirFly.Api.DTOs;
 
-/// <summary>Represents a stored article returned by the application.</summary>
+/// <summary>Represents a stored article returned by the HTTP API.</summary>
 /// <param name="ArticleId">The positive, server-generated identifier.</param>
 /// <param name="Name">The article name.</param>
 /// <param name="Description">The article description.</param>

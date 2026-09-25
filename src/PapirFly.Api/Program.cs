@@ -2,7 +2,6 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using PapirFly.Api;
 using PapirFly.Application;
-using PapirFly.Application.DTOs;
 using PapirFly.Infrastructure;
 using Serilog;
 
@@ -12,7 +11,7 @@ builder.Services.AddSerilog((services, configuration) => configuration
     .ReadFrom.Configuration(builder.Configuration)
     .ReadFrom.Services(services)
     .Enrich.FromLogContext(), preserveStaticLogger: true);
-builder.Services.AddApplication();
+builder.Services.AddApplication(ArticleMappings.Configure);
 builder.Services.AddInfrastructure(builder.Configuration);
 builder.Services.AddControllers().AddJsonOptions(options =>
 {
@@ -25,8 +24,8 @@ builder.Services.AddProblemDetails();
 builder.Services.AddExceptionHandler<ApiExceptionHandler>();
 builder.Services.AddSwaggerGen(options =>
 {
+    options.DescribeAllParametersInCamelCase();
     options.IncludeXmlComments(Path.Combine(AppContext.BaseDirectory, "PapirFly.Api.xml"), includeControllerXmlComments: true);
-    options.IncludeXmlComments(Path.Combine(AppContext.BaseDirectory, $"{typeof(ArticleResponse).Assembly.GetName().Name}.xml"));
 });
 
 var app = builder.Build();
