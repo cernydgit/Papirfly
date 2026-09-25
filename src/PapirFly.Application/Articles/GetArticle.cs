@@ -1,4 +1,5 @@
 using MapsterMapper;
+using MediatR;
 using PapirFly.Application.Articles.Queries;
 using PapirFly.Application.DTOs;
 using PapirFly.Application.Interfaces;
@@ -9,6 +10,7 @@ namespace PapirFly.Application.Articles;
 /// <param name="repository">The article persistence boundary.</param>
 /// <param name="mapper">The configured DTO/entity mapper.</param>
 public sealed class GetArticleHandler(IArticleRepository repository, IMapper mapper)
+    : IRequestHandler<GetArticleQuery, ArticleResponse>
 {
     /// <summary>Reads an article by its identifier.</summary>
     /// <param name="query">The identifier to look up.</param>

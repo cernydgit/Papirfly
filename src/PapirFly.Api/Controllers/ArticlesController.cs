@@ -1,25 +1,17 @@
+using MediatR;
 using Microsoft.AspNetCore.Mvc;
-using PapirFly.Application.Articles;
 using PapirFly.Application.Articles.Commands;
+using PapirFly.Application.Articles.Queries;
 using PapirFly.Application.DTOs;
 
 namespace PapirFly.Api.Controllers;
 
 /// <summary>Registers, retrieves and updates shop articles.</summary>
-/// <param name="createArticle">Handles single article creation.</param>
-/// <param name="createArticles">Handles concurrent batch creation.</param>
-/// <param name="getArticle">Handles reads by identifier.</param>
-/// <param name="findArticles">Handles filtered searches.</param>
-/// <param name="updateArticle">Handles updates with optimistic concurrency.</param>
+/// <param name="sender">Dispatches commands and queries to their application handlers through MediatR.</param>
 [ApiController]
 [Route("api/articles")]
 [Produces("application/json")]
-public sealed class ArticlesController(
-    CreateArticleHandler createArticle,
-    CreateArticlesHandler createArticles,
-    GetArticleHandler getArticle,
-    FindArticlesHandler findArticles,
-    UpdateArticleHandler updateArticle) : ControllerBase
+public sealed class ArticlesController(ISender sender) : ControllerBase
 {
     /// <summary>Registers an article.</summary>
     /// <remarks>
@@ -38,7 +30,7 @@ public sealed class ArticlesController(
     [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
     public async Task<ActionResult<ArticleResponse>> Create(
         [FromBody] CreateArticleCommand command, CancellationToken cancellationToken) =>
-        Ok(await createArticle.Handle(command, cancellationToken));
+        Ok(await sender.Send(command, cancellationToken));
 
     /// <summary>Registers an array of articles concurrently.</summary>
     /// <remarks>
@@ -56,7 +48,7 @@ public sealed class ArticlesController(
     [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
     public async Task<ActionResult<ArticleResponse[]>> CreateConcurrently(
         [FromBody] CreateArticleCommand?[] articles, CancellationToken cancellationToken) =>
-        Ok(await createArticles.Handle(new(articles), cancellationToken));
+        Ok(await sender.Send(new CreateArticlesCommand(articles), cancellationToken));
 
     /// <summary>Gets an article by its generated identifier.</summary>
     /// <remarks>Returns 404 if the identifier does not exist. Keep the returned version for the next update.</remarks>
@@ -69,7 +61,7 @@ public sealed class ArticlesController(
     [ProducesResponseType<ArticleResponse>(StatusCodes.Status200OK)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
     public async Task<ActionResult<ArticleResponse>> Get(int articleId, CancellationToken cancellationToken) =>
-        Ok(await getArticle.Handle(new(articleId), cancellationToken));
+        Ok(await sender.Send(new GetArticleQuery(articleId), cancellationToken));
 
     /// <summary>Finds articles by name and category.</summary>
     /// <remarks>
@@ -85,7 +77,7 @@ public sealed class ArticlesController(
     [ProducesResponseType<ArticleResponse[]>(StatusCodes.Status200OK)]
     public async Task<ActionResult<ArticleResponse[]>> Find(
         [FromQuery] string? name, [FromQuery] string? category, CancellationToken cancellationToken) =>
-        Ok(await findArticles.Handle(new(name, category), cancellationToken));
+        Ok(await sender.Send(new FindArticlesQuery(name, category), cancellationToken));
 
     /// <summary>Replaces an article using optimistic concurrency.</summary>
     /// <remarks>
@@ -94,7 +86,7 @@ public sealed class ArticlesController(
     /// Omitted optional fields are cleared.
     /// </remarks>
     /// <param name="articleId">The identifier of the article to replace.</param>
-    /// <param name="command">The replacement values and the version from the last read.</param>
+    /// <param name="request">The replacement values and the version from the last read.</param>
     /// <param name="cancellationToken">Cancels the read or write.</param>
     /// <returns>The updated article with its new concurrency token.</returns>
     /// <response code="200">The article was updated.</response>
@@ -107,6 +99,6 @@ public sealed class ArticlesController(
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
     public async Task<ActionResult<ArticleResponse>> Update(
-        int articleId, [FromBody] UpdateArticleCommand command, CancellationToken cancellationToken) =>
-        Ok(await updateArticle.Handle(articleId, command, cancellationToken));
+        int articleId, [FromBody] UpdateArticleRequest request, CancellationToken cancellationToken) =>
+        Ok(await sender.Send(new UpdateArticleCommand(articleId, request), cancellationToken));
 }

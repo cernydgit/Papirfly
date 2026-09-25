@@ -1,4 +1,5 @@
 using MapsterMapper;
+using MediatR;
 using PapirFly.Application.Articles.Commands;
 using PapirFly.Application.DTOs;
 using PapirFly.Application.Interfaces;
@@ -10,6 +11,7 @@ namespace PapirFly.Application.Articles;
 /// <param name="repository">The article persistence boundary.</param>
 /// <param name="mapper">The configured DTO/entity mapper.</param>
 public sealed class CreateArticleHandler(IArticleRepository repository, IMapper mapper)
+    : IRequestHandler<CreateArticleCommand, ArticleResponse>
 {
     /// <summary>Creates an article and returns its stored representation.</summary>
     /// <param name="command">The article fields to validate and store.</param>

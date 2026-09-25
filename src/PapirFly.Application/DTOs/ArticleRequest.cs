@@ -1,7 +1,7 @@
 namespace PapirFly.Application.DTOs;
 
 /// <summary>Contains the editable fields shared by article creation and update requests.</summary>
-public abstract record ArticleInput
+public abstract record ArticleRequest
 {
     /// <summary>Gets the required, nonblank article name, up to 64 characters.</summary>
     public string? Name { get; init; }

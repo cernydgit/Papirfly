@@ -30,10 +30,11 @@ public sealed class DocumentationTests(ApiFixture api) : IClassFixture<ApiFixtur
         var schemas = document.GetProperty("components").GetProperty("schemas");
         Assert.True(schemas.GetProperty("ArticleResponse").GetProperty("properties").TryGetProperty("article_id", out _));
         Assert.False(schemas.GetProperty("CreateArticleCommand").GetProperty("properties").TryGetProperty("article_id", out _));
-        Assert.True(schemas.GetProperty("UpdateArticleCommand").GetProperty("properties").TryGetProperty("version", out _));
+        Assert.True(schemas.GetProperty("UpdateArticleRequest").GetProperty("properties").TryGetProperty("version", out _));
+        Assert.False(schemas.GetProperty("UpdateArticleRequest").GetProperty("properties").TryGetProperty("article_id", out _));
         var name = schemas.GetProperty("CreateArticleCommand").GetProperty("properties").GetProperty("name");
         Assert.Contains("64 characters", name.GetProperty("description").GetString());
-        var version = schemas.GetProperty("UpdateArticleCommand").GetProperty("properties").GetProperty("version");
+        var version = schemas.GetProperty("UpdateArticleRequest").GetProperty("properties").GetProperty("version");
         Assert.Contains("concurrency token", version.GetProperty("description").GetString());
     }
 

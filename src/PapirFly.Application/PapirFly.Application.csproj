@@ -2,6 +2,7 @@
   <ItemGroup>
     <ProjectReference Include="../PapirFly.Domain/PapirFly.Domain.csproj" />
     <PackageReference Include="Mapster" />
+    <PackageReference Include="MediatR" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" />
   </ItemGroup>
 </Project>

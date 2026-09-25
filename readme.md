@@ -5,7 +5,7 @@
 > testable use cases, replaceable infrastructure, and automated verification.
 
 REST API for registering and retrieving shop articles, based on [NET Developer.pdf](NET%20Developer.pdf).
-The solution uses .NET 10, ASP.NET Core controllers, EF Core InMemory or PostgreSQL, Mapster, Serilog,
+The solution uses .NET 10, ASP.NET Core controllers, MediatR, EF Core InMemory or PostgreSQL, Mapster, Serilog,
 and Alba + xUnit tests with optional PostgreSQL Testcontainers.
 
 > **A running local Docker installation is required for the PostgreSQL setup below and for PostgreSQL
@@ -91,7 +91,7 @@ src/
     Articles/                Use case handlers, shared validation and exceptions
       Commands/              One command per file
       Queries/               One query per file
-    DTOs/                    ArticleInput and ArticleResponse
+    DTOs/                    ArticleRequest, UpdateArticleRequest and ArticleResponse
     Interfaces/              IArticleRepository
   PapirFly.Infrastructure/    Storage options, EF Core context, repository and PostgreSQL migrations
   PapirFly.Api/               JSON, Problem Details, Serilog, Swagger and DI configuration
@@ -115,7 +115,7 @@ flowchart LR
 
 `Domain` has no project or package dependencies. `Application` does not depend on HTTP, ASP.NET Core,
 EF Core, or a particular database. It uses `IArticleRepository`, which `Infrastructure` implements.
-`Api` is the composition root: it registers implementations and translates HTTP requests into handler calls.
+`Api` is the composition root: it registers implementations and translates HTTP requests into MediatR commands and queries.
 Its infrastructure reference is used for registration; the controller does not access the context.
 
 The domain has one simple entity. Additional aggregate hierarchies, domain events, and service layers
@@ -138,19 +138,45 @@ Reads and writes have separate models and handlers:
 | Read by ID | `GetArticleQuery` | `GetArticleHandler` |
 | Search | `FindArticlesQuery` | `FindArticlesHandler` |
 
-Create and update commands also serve as the write request contracts. The update ID is supplied
-separately from the route. Queries read detached entities with `AsNoTracking` and return
+`CreateArticleCommand` also serves as the single-create request contract and the batch item contract.
+PUT binds an `UpdateArticleRequest` DTO, then combines it with the route ID in `UpdateArticleCommand`.
+The ID therefore travels with the command to its handler without becoming a writable JSON body property.
+Queries read detached entities with `AsNoTracking` and return
 `ArticleResponse` objects. Commands validate their inputs, write through the repository, and return
 the stored representation.
 
-CQRS separates responsibilities over a single store; it does not require separate databases or event
-sourcing. The controller receives concrete handlers through constructor injection. No mediator,
-reflection-based dispatcher, or generic request/response hierarchy is needed.
+CQRS separates read and write responsibilities over a single store; it does not require separate databases
+or event sourcing. MediatR dispatches both kinds of request to their respective handlers.
+
+### Mediator pattern with MediatR
+
+`ArticlesController` depends on MediatR's `ISender`. Each action calls `Send` with a command or query and
+the HTTP cancellation token. All five commands and queries implement `IRequest<TResponse>`, and their
+handlers implement the corresponding `IRequestHandler<TRequest, TResponse>`. MediatR resolves and calls
+the matching handler through DI; the controller does not depend on concrete handler classes.
+
+```mermaid
+flowchart LR
+    Controller[ArticlesController] --> Sender[ISender.Send]
+    Sender --> Handler[IRequestHandler]
+    Handler --> Repository[IArticleRepository]
+    Repository --> Storage[EF Core storage]
+```
+
+`AddApplication` scans only the application assembly to register handlers. This replaces the manual
+handler registrations. MediatR's sender and handlers use their default transient lifetime and resolve
+the repository from the current request scope. Validation remains in the existing handlers, including
+whole-batch validation before writes. Exceptions reach the API's Problem Details handler, and cancellation
+continues through the repository to EF Core. No custom dispatcher, pipeline behaviors or notifications
+are needed for the current use cases.
+
+The solution pins **MediatR 12.5.0**, the [Apache 2.0 licensed version](https://github.com/LuckyPennySoftware/MediatR/blob/v12.5.0/LICENSE),
+so running the example does not require a MediatR license key.
 
 ### Controller and HTTP boundary
 
 `ArticlesController` derives from `ControllerBase` and uses `[ApiController]` with attribute routing.
-Its five actions delegate to the application handlers and return `ActionResult<ArticleResponse>` or
+Its five actions dispatch through MediatR and return `ActionResult<ArticleResponse>` or
 `ActionResult<ArticleResponse[]>`. The batch action keeps the assignment's `/api/articles-concurrent` route.
 
 MVC handles JSON deserialization and malformed-body errors. Shared application validation continues
@@ -179,12 +205,12 @@ PostgreSQL case folding follows the database locale. Category matching remains a
 
 ### Mapster and shared rules
 
-Mapster maps input commands to `Article` and entities to `ArticleResponse`. Its configuration belongs
-to the host and is compiled at startup. Input maps inherit the common `ArticleInput -> Article` mapping,
+Mapster maps `CreateArticleCommand` and `UpdateArticleRequest` to `Article`, and entities to `ArticleResponse`. Its configuration belongs
+to the host and is compiled at startup. Input maps inherit the common `ArticleRequest -> Article` mapping,
 which ignores the server-managed ID and version. Updates map onto the loaded entity, including clearing
 omitted optional fields.
 
-`ArticleInput` shares the editable fields. `ArticleValidator` shares validation between single creates,
+`ArticleRequest` shares the editable fields. `ArticleValidator` shares validation between single creates,
 batches, and updates. Field length limits are declared once in the domain and reused by validation and
 EF configuration. `ArticleResponse` is the output contract; entities are not returned directly over HTTP.
 
@@ -353,7 +379,7 @@ the context factory is resolved. InMemory mode overrides the same DI options wit
 Test cleanup never uses a configured development or production connection string. A requested PostgreSQL
 run fails if Docker is unavailable; it does not silently fall back or skip SQL tests.
 
-Alba exercises the same controller pipeline, DI, validation, Mapster and repository with either provider.
+Alba exercises the same controller pipeline, MediatR dispatch, DI, validation, Mapster and repository with either provider.
 TestServer is the in-memory HTTP host; PostgreSQL is still a real SQL server in its container. A fixture
 shares its host and, in SQL mode, its container within a test class. Other fixtures have isolated stores.
 Before each article test, PostgreSQL rows are deleted without dropping the schema or migration history;
@@ -431,6 +457,7 @@ The workflow requests only `contents: read` permission.
 
 - [Alba: HTTP integration scenarios](https://jasperfx.github.io/alba/guide/gettingstarted.html)
 - [Mapster: mapping configuration](https://github.com/MapsterMapper/Mapster/wiki/Configuration)
+- [MediatR: requests, handlers and DI registration](https://github.com/LuckyPennySoftware/MediatR/tree/v12.5.0)
 - [EF Core: optimistic concurrency](https://learn.microsoft.com/en-us/ef/core/saving/concurrency)
 - [Npgsql: SQL query translations](https://www.npgsql.org/efcore/mapping/translations.html)
 - [Testcontainers: PostgreSQL module](https://dotnet.testcontainers.org/modules/postgres/)

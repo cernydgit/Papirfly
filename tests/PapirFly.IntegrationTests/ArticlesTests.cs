@@ -269,6 +269,21 @@ public sealed class ArticlesTests(ApiFixture api) : IClassFixture<ApiFixture>, I
         Assert.Equal(updated.GetRawText(), (await api.Send("GET", Url(created))).Json.GetRawText());
     }
 
+    /// <summary>Verifies that the update command carries the route identifier and leaves other articles unchanged.</summary>
+    /// <returns>A task that completes after updating the second article and checking both stored articles.</returns>
+    [Fact]
+    public async Task Update_targets_the_route_identifier_and_preserves_other_articles()
+    {
+        var first = await Create();
+        var second = await Create();
+        var updated = (await api.Send("PUT", Url(second), UpdatePayload(second, "Second article updated"))).Json;
+
+        Assert.Equal(second.GetProperty("article_id").GetInt32(), updated.GetProperty("article_id").GetInt32());
+        Assert.Equal("Second article updated", updated.GetProperty("name").GetString());
+        Assert.Equal(first.GetRawText(), (await api.Send("GET", Url(first))).Json.GetRawText());
+        Assert.Equal(updated.GetRawText(), (await api.Send("GET", Url(second))).Json.GetRawText());
+    }
+
     /// <summary>Verifies rejection of a stale version and acceptance of the next current version.</summary>
     /// <returns>A task that completes after the conflict and update assertions.</returns>
     [Fact]
