@@ -1,0 +1,7 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <ItemGroup>
+    <ProjectReference Include="../PapirFly.Application/PapirFly.Application.csproj" />
+    <ProjectReference Include="../PapirFly.Infrastructure/PapirFly.Infrastructure.csproj" />
+    <PackageReference Include="Swashbuckle.AspNetCore" />
+  </ItemGroup>
+</Project>
