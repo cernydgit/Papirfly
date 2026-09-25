@@ -47,6 +47,7 @@ jobs:
           dotnet test tests/PapirFly.UnitTests/PapirFly.UnitTests.csproj
           --configuration Release --no-build --no-restore
           --logger "trx;LogFileName=unit.trx" --results-directory TestResults
+          --collect:"XPlat Code Coverage" --settings coverage.runsettings
 
       - name: Alba integration tests
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
@@ -54,6 +55,7 @@ jobs:
           dotnet test tests/PapirFly.IntegrationTests/PapirFly.IntegrationTests.csproj
           --configuration Release --no-build --no-restore
           --logger "trx;LogFileName=integration.trx" --results-directory TestResults
+          --collect:"XPlat Code Coverage" --settings coverage.runsettings
 
       - name: Test report
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
@@ -70,11 +72,34 @@ jobs:
           fail-on-error: 'true'
           fail-on-empty: 'true'
 
+      - name: Coverage report
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        shell: bash
+        run: |
+          dotnet tool restore
+          dotnet reportgenerator \
+            "-reports:TestResults/**/coverage.cobertura.xml" \
+            "-targetdir:TestResults/CoverageReport" \
+            "-reporttypes:Html;MarkdownSummaryGithub;Cobertura" \
+            "-title:Code coverage (${{ matrix.storage }})"
+          cat TestResults/CoverageReport/SummaryGithub.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage-report-${{ matrix.storage }}
+          path: TestResults/CoverageReport/
+          if-no-files-found: ignore
+          retention-days: 14
+
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@v7
         with:
           name: test-results-${{ matrix.storage }}
-          path: TestResults/*.trx
+          path: |
+            TestResults/*.trx
+            TestResults/**/coverage.cobertura.xml
           if-no-files-found: ignore
           retention-days: 14

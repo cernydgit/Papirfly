@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<RunSettings>
+  <DataCollectionRunSettings>
+    <DataCollectors>
+      <DataCollector friendlyName="XPlat Code Coverage">
+        <Configuration>
+          <Format>cobertura</Format>
+          <Include>[PapirFly.*]*</Include>
+          <Exclude>[PapirFly.*Tests]*</Exclude>
+          <IncludeTestAssembly>false</IncludeTestAssembly>
+          <!-- Generated EF migrations and build output are not handwritten application logic. -->
+          <ExcludeByFile>**/Migrations/**/*.cs,**/obj/**/*.cs</ExcludeByFile>
+        </Configuration>
+      </DataCollector>
+    </DataCollectors>
+  </DataCollectionRunSettings>
+</RunSettings>

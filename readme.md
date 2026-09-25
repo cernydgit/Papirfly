@@ -1,5 +1,9 @@
 # PapirFly
 
+> **Design intent:** This solution may look overengineered for the size of the assignment. I deliberately
+> chose this design to demonstrate how I would approach a real enterprise product, with clear boundaries,
+> testable use cases, replaceable infrastructure, and automated verification.
+
 REST API for registering and retrieving shop articles, based on [NET Developer.pdf](NET%20Developer.pdf).
 The solution uses .NET 10, ASP.NET Core controllers, EF Core InMemory or PostgreSQL, Mapster, Serilog,
 and Alba + xUnit tests with optional PostgreSQL Testcontainers.
@@ -374,7 +378,8 @@ It uses an Ubuntu matrix with **InMemory and PostgreSql** jobs. Each job:
 4. Runs unit tests and the full Alba integration suite with `PAPIRFLY_TEST_Storage__Provider` set to its matrix
    provider. The SQL job uses the runner's Docker daemon and disposable Testcontainers. A test failure fails the job.
 5. Publishes a visual test report in the run's **Summary**, separately for each storage provider.
-6. Uploads available TRX results as `test-results-InMemory` or `test-results-PostgreSql`, including on test failure,
+6. Merges unit and integration coverage, adds a coverage summary, and uploads an interactive HTML coverage report.
+7. Uploads available TRX and raw coverage results as `test-results-InMemory` or `test-results-PostgreSql`, including on test failure,
    with 14-day retention.
 
 ### Viewing test results
@@ -389,6 +394,33 @@ Reports are generated from the existing TRX files using [Test Reporter](https://
 After a successful build, integration tests and reporting run even if unit tests fail; failures still fail
 the job. If the build fails before tests can run, there is no test report. Raw logs remain available under
 the **Unit tests** and **Alba integration tests** steps, and TRX downloads remain in **Artifacts**.
+
+### Code coverage
+
+The same run's **Summary** includes line and branch coverage with a breakdown by assembly and class,
+separately for InMemory and PostgreSQL. For the full graphical report, download **coverage-report-InMemory**
+or **coverage-report-PostgreSql** from **Artifacts**, extract the archive, and open **index.html** in a browser.
+The HTML report provides coverage bars and source code with covered and uncovered lines highlighted.
+Each archive also contains the merged `Cobertura.xml` for other tooling and is retained for 14 days.
+
+[Coverlet](https://github.com/coverlet-coverage/coverlet) collects coverage during both test suites.
+[ReportGenerator](https://github.com/danielpalme/ReportGenerator) merges the results within each storage job,
+so a line exercised by both suites counts only once. Reports cover the four production projects; test
+assemblies, generated EF migrations, and generated build files are excluded through `coverage.runsettings`.
+No coverage percentage threshold is imposed. Reports are also attempted after failed tests; in that case
+they reflect only the tests that actually ran and are not evidence of a successful full test run.
+
+To generate the same report locally from the repository root (use a fresh results directory for each run):
+
+```sh
+dotnet tool restore
+dotnet test PapirFly.sln --configuration Release --collect:"XPlat Code Coverage" --settings coverage.runsettings --results-directory TestResults/CoverageLocal
+dotnet reportgenerator "-reports:TestResults/CoverageLocal/**/coverage.cobertura.xml" "-targetdir:TestResults/CoverageLocal/Report" "-reporttypes:Html;MarkdownSummaryGithub;Cobertura"
+```
+
+Open `TestResults/CoverageLocal/Report/index.html`. The normal `PAPIRFLY_TEST_Storage__Provider` override also
+applies to this command; selecting PostgreSQL requires Docker. ReportGenerator's version is pinned in
+`.config/dotnet-tools.json`, and the collector version is managed in `Directory.Packages.props`.
 
 Package versions are centralized in `Directory.Packages.props`. After changing dependencies, run
 `dotnet restore` and include the updated lock files with the change. CI needs no separately provisioned
